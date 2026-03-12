@@ -1,0 +1,44 @@
+# Dependencies
+**/node_modules/
+
+# Build outputs
+**/dist/
+**/.next/
+**/out/
+
+# Environment (keep only .env.example)
+.env
+.env.*
+!.env.example
+**/.env
+**/.env.*
+!**/.env.example
+
+# Prisma
+server/prisma/migrations/
+**/generated/
+
+# Logs
+*.log
+**/logs/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+.mcp.json
+**/.mcp.json
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Docker
+docker-compose.override.yml
+
+# Coverage
+**/coverage/
+
+# TypeScript
+*.tsbuildinfo

@@ -1,0 +1,41 @@
+generator client {
+  provider     = "prisma-client"
+  output       = "../generated/prisma"
+  moduleFormat = "cjs"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+enum GenerationType {
+  IMAGE
+  TEXT
+}
+
+enum JobStatus {
+  PENDING
+  GENERATING
+  COMPLETED
+  FAILED
+  CANCELLED
+}
+
+model Generation {
+  id             String         @id @default(uuid())
+  prompt         String
+  enhancedPrompt String?
+  type           GenerationType
+  status         JobStatus      @default(PENDING)
+  imageUrl       String?
+  textResult     String?
+  error          String?
+  parameters     Json?
+  jobId          String?        @unique
+  createdAt      DateTime       @default(now())
+  updatedAt      DateTime       @updatedAt
+
+  @@index([status])
+  @@index([type])
+  @@index([createdAt])
+}
