@@ -20,7 +20,7 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import { createGeneration } from "@/lib/api";
-import { GenerationType } from "@/lib/constants";
+import { GenerationType, JobPriority } from "@/lib/constants";
 import type { CreateGenerationPayload } from "@/lib/types";
 import { toast } from "sonner";
 
@@ -32,6 +32,7 @@ export function PromptForm({ onCreated }: PromptFormProps) {
   const [prompt, setPrompt] = useState("");
   const [type, setType] = useState<GenerationType>(GenerationType.IMAGE);
   const [enhance, setEnhance] = useState(false);
+  const [priority, setPriority] = useState<JobPriority>(JobPriority.NORMAL);
   const [loading, setLoading] = useState(false);
   const [showParams, setShowParams] = useState(false);
   const [width, setWidth] = useState("1024");
@@ -49,6 +50,7 @@ export function PromptForm({ onCreated }: PromptFormProps) {
         prompt: prompt.trim(),
         type,
         enhance,
+        priority,
       };
 
       if (type === GenerationType.IMAGE && showParams) {
@@ -104,6 +106,25 @@ export function PromptForm({ onCreated }: PromptFormProps) {
               <Type className="h-4 w-4" />
               Text
             </Button>
+          </div>
+
+          <div>
+            <label className="mb-1 block text-xs text-muted-foreground">
+              Priority
+            </label>
+            <Select
+              value={priority}
+              onValueChange={(v) => setPriority(v as JobPriority)}
+            >
+              <SelectTrigger className="w-[140px]">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value={JobPriority.HIGH}>High</SelectItem>
+                <SelectItem value={JobPriority.NORMAL}>Normal</SelectItem>
+                <SelectItem value={JobPriority.LOW}>Low</SelectItem>
+              </SelectContent>
+            </Select>
           </div>
 
           <Textarea

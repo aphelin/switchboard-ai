@@ -21,12 +21,19 @@ enum JobStatus {
   CANCELLED
 }
 
+enum JobPriority {
+  HIGH
+  NORMAL
+  LOW
+}
+
 model Generation {
   id             String         @id @default(uuid())
   prompt         String
   enhancedPrompt String?
   type           GenerationType
   status         JobStatus      @default(PENDING)
+  priority       JobPriority    @default(NORMAL)
   imageUrl       String?
   textResult     String?
   error          String?
@@ -37,5 +44,6 @@ model Generation {
 
   @@index([status])
   @@index([type])
+  @@index([priority])
   @@index([createdAt])
 }

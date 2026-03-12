@@ -1,6 +1,16 @@
+import type { Metadata } from 'next';
 import { Suspense } from 'react';
 import { GalleryGrid } from '@/components/gallery-grid';
 import { Skeleton } from '@/components/ui/skeleton';
+
+export const metadata: Metadata = {
+  title: 'Gallery',
+  description: 'Browse all completed AI-generated images.',
+  openGraph: {
+    title: 'Gallery | Mini AI Toolkit',
+    description: 'Browse all completed AI-generated images.',
+  },
+};
 
 function GalleryLoading() {
   return (

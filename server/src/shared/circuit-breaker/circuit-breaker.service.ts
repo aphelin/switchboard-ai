@@ -32,6 +32,12 @@ export class CircuitBreakerService {
     breaker.on('fallback', () =>
       this.logger.warn(`Circuit breaker FALLBACK triggered for: ${name}`),
     );
+    breaker.on('failure', (error: unknown) =>
+      this.logger.error(
+        `Circuit breaker FAILURE for: ${name} — ${error instanceof Error ? error.message : String(error)}`,
+        error instanceof Error ? error.stack : undefined,
+      ),
+    );
 
     if (fallback) {
       breaker.fallback(fallback);

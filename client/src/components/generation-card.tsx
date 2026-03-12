@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import Image from "next/image";
 import { Card, CardContent } from "@/components/ui/card";
 import {
   Dialog,
@@ -9,6 +10,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { StatusBadge } from "./status-badge";
+import { PriorityBadge } from "./priority-badge";
 import { Button } from "@/components/ui/button";
 import { RotateCcw, Ban, ImageIcon, Type } from "lucide-react";
 import { retryGeneration, cancelGeneration } from "@/lib/api";
@@ -70,12 +72,12 @@ export function GenerationCard({
         generation.status === JobStatus.COMPLETED &&
         generation.imageUrl ? (
           <div className="relative aspect-square overflow-hidden bg-muted">
-            {/* eslint-disable-next-line @next/next/no-img-element */}
-            <img
+            <Image
               src={generation.imageUrl}
               alt={generation.prompt}
-              className="h-full w-full object-cover transition-transform group-hover:scale-105"
-              loading="lazy"
+              fill
+              sizes="(max-width: 640px) 100vw, (max-width: 1024px) 50vw, 33vw"
+              className="object-cover transition-transform group-hover:scale-105"
             />
             <div className="absolute inset-0 bg-linear-to-t from-black/60 via-transparent to-transparent opacity-0 transition-opacity group-hover:opacity-100" />
             <p className="absolute bottom-2 left-2 right-2 truncate text-xs text-white opacity-0 transition-opacity group-hover:opacity-100">
@@ -109,7 +111,10 @@ export function GenerationCard({
         )}
 
         <div className="flex items-center justify-between border-t p-2 px-3">
-          <StatusBadge status={generation.status} />
+          <div className="flex items-center gap-1.5">
+            <StatusBadge status={generation.status} />
+            <PriorityBadge priority={generation.priority} />
+          </div>
           {showActions && (
             <div className="flex gap-1">
               {(generation.status === JobStatus.FAILED ||
@@ -160,12 +165,15 @@ export function GenerationCard({
             {isImage &&
               generation.status === JobStatus.COMPLETED &&
               generation.imageUrl && (
-                <div className="overflow-hidden rounded-lg">
-                  {/* eslint-disable-next-line @next/next/no-img-element */}
-                  <img
+                <div className="relative overflow-hidden rounded-lg">
+                  <Image
                     src={generation.imageUrl}
                     alt={generation.prompt}
-                    className="w-full"
+                    width={1024}
+                    height={1024}
+                    sizes="(max-width: 768px) 100vw, 672px"
+                    className="h-auto w-full"
+                    priority
                   />
                 </div>
               )}
@@ -197,6 +205,7 @@ export function GenerationCard({
 
               <div className="flex flex-wrap items-center gap-4 text-xs text-muted-foreground">
                 <StatusBadge status={generation.status} />
+                <PriorityBadge priority={generation.priority} />
                 <span>{generation.type}</span>
                 <span className="rounded bg-muted px-1.5 py-0.5 font-mono">
                   {generation.parameters?.model

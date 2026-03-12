@@ -11,7 +11,10 @@ import {
   Max,
 } from 'class-validator';
 import { Type } from 'class-transformer';
-import { GenerationType } from '../../../../generated/prisma/enums.js';
+import {
+  GenerationType,
+  JobPriority,
+} from '../../../../generated/prisma/enums.js';
 import {
   ImageModel,
   TextModel,
@@ -71,6 +74,10 @@ export class CreateGenerationDto {
   @IsOptional()
   @IsBoolean()
   enhance?: boolean;
+
+  @IsOptional()
+  @IsEnum(JobPriority)
+  priority?: JobPriority;
 
   @IsOptional()
   @IsObject()

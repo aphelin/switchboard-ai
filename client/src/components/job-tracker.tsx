@@ -4,6 +4,7 @@ import { useRef, useEffect, useState } from "react";
 import { useGenerations } from "@/hooks/use-generations";
 import { useSSE } from "@/hooks/use-sse";
 import { StatusBadge } from "./status-badge";
+import { PriorityBadge } from "./priority-badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -144,6 +145,7 @@ export function JobTracker({ refreshKey }: JobTrackerProps) {
                   </p>
                 </div>
                 <div className="flex items-center gap-2">
+                  <PriorityBadge priority={job.priority} />
                   <StatusBadge status={job.status} />
                   <Button
                     variant="ghost"

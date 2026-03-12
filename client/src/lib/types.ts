@@ -1,6 +1,6 @@
-import type { GenerationType, JobStatus, SseEventType } from './constants';
+import type { GenerationType, JobStatus, JobPriority, SseEventType } from './constants';
 
-export type { GenerationType, JobStatus, SseEventType } from './constants';
+export type { GenerationType, JobStatus, JobPriority, SseEventType } from './constants';
 
 export interface Generation {
   id: string;
@@ -8,6 +8,7 @@ export interface Generation {
   enhancedPrompt: string | null;
   type: GenerationType;
   status: JobStatus;
+  priority: JobPriority;
   imageUrl: string | null;
   textResult: string | null;
   error: string | null;
@@ -29,6 +30,7 @@ export interface CreateGenerationPayload {
   prompt: string;
   type: GenerationType;
   enhance?: boolean;
+  priority?: JobPriority;
   parameters?: ImageParameters | TextParameters;
 }
 

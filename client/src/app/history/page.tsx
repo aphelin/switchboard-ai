@@ -1,6 +1,16 @@
+import type { Metadata } from 'next';
 import { Suspense } from 'react';
 import { GenerationHistory } from '@/components/generation-history';
 import { Skeleton } from '@/components/ui/skeleton';
+
+export const metadata: Metadata = {
+  title: 'History',
+  description: 'View and manage all past AI image and text generations.',
+  openGraph: {
+    title: 'Generation History | Mini AI Toolkit',
+    description: 'View and manage all past AI image and text generations.',
+  },
+};
 
 function HistoryLoading() {
   return (

@@ -3,6 +3,7 @@ import { PrismaService } from '../../../prisma/prisma.service';
 import type {
   Generation,
   GenerationType,
+  JobPriority,
   PaginatedResult,
 } from '../types/generation.types';
 import { JobStatus, Prisma } from 'generated/prisma/browser';
@@ -14,6 +15,7 @@ export class GenerationRepository {
   async create(data: {
     prompt: string;
     type: GenerationType;
+    priority?: JobPriority;
     parameters?: Record<string, unknown>;
     jobId?: string;
   }): Promise<Generation> {

@@ -13,6 +13,19 @@ export const JobStatus = {
 } as const;
 export type JobStatus = (typeof JobStatus)[keyof typeof JobStatus];
 
+export const JobPriority = {
+  HIGH: 'HIGH',
+  NORMAL: 'NORMAL',
+  LOW: 'LOW',
+} as const;
+export type JobPriority = (typeof JobPriority)[keyof typeof JobPriority];
+
+export const JOB_PRIORITY_LABELS: Record<JobPriority, string> = {
+  [JobPriority.HIGH]: 'High',
+  [JobPriority.NORMAL]: 'Normal',
+  [JobPriority.LOW]: 'Low',
+} as const;
+
 export const SseEventType = {
   STATUS_UPDATE: 'status-update',
   GENERATION_COMPLETE: 'generation-complete',

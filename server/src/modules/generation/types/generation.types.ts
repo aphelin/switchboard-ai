@@ -1,5 +1,5 @@
-export { GenerationType, JobStatus } from 'generated/prisma/enums';
-import type { GenerationType, JobStatus } from 'generated/prisma/enums';
+export { GenerationType, JobStatus, JobPriority } from 'generated/prisma/enums';
+import type { GenerationType, JobStatus, JobPriority } from 'generated/prisma/enums';
 
 export interface Generation {
   id: string;
@@ -7,6 +7,7 @@ export interface Generation {
   enhancedPrompt: string | null;
   type: GenerationType;
   status: JobStatus;
+  priority: JobPriority;
   imageUrl: string | null;
   textResult: string | null;
   error: string | null;

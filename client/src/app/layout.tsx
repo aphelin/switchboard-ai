@@ -15,10 +15,37 @@ const geistMono = Geist_Mono({
   subsets: ['latin'],
 });
 
+const APP_URL = process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000';
+
 export const metadata: Metadata = {
-  title: 'Mini AI Toolkit',
+  metadataBase: new URL(APP_URL),
+  title: {
+    default: 'Mini AI Toolkit',
+    template: '%s | Mini AI Toolkit',
+  },
   description:
-    'Generate AI content through a prompt-based interface with async job processing',
+    'Generate AI images and text through a prompt-based interface with async job processing and priority queuing.',
+  keywords: ['AI', 'image generation', 'text generation', 'Pollinations', 'prompt'],
+  authors: [{ name: 'Mini AI Toolkit' }],
+  openGraph: {
+    type: 'website',
+    locale: 'en_US',
+    url: APP_URL,
+    siteName: 'Mini AI Toolkit',
+    title: 'Mini AI Toolkit',
+    description:
+      'Generate AI images and text through a prompt-based interface with async job processing and priority queuing.',
+  },
+  twitter: {
+    card: 'summary_large_image',
+    title: 'Mini AI Toolkit',
+    description:
+      'Generate AI images and text through a prompt-based interface with async job processing and priority queuing.',
+  },
+  robots: {
+    index: true,
+    follow: true,
+  },
 };
 
 export default function RootLayout({

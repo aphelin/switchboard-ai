@@ -14,8 +14,9 @@ import {
   GENERATION_JOB_NAME,
   JOB_ATTEMPTS,
   JOB_BACKOFF_DELAY,
+  BULLMQ_PRIORITY,
 } from '../../../shared/constants/app.constants';
-import { JobStatus } from 'generated/prisma/enums';
+import { JobStatus, JobPriority } from 'generated/prisma/enums';
 import type {
   Generation,
   GenerationJobData,
@@ -32,9 +33,12 @@ export class GenerationService {
   ) {}
 
   async create(dto: CreateGenerationDto): Promise<Generation> {
+    const priority = dto.priority ?? JobPriority.NORMAL;
+
     const generation = await this.generationRepository.create({
       prompt: dto.prompt,
       type: dto.type,
+      priority,
       parameters: dto.parameters as Record<string, unknown>,
     });
 
@@ -47,6 +51,7 @@ export class GenerationService {
     };
 
     const job = await this.generationQueue.add(GENERATION_JOB_NAME, jobData, {
+      priority: BULLMQ_PRIORITY[priority],
       attempts: JOB_ATTEMPTS,
       backoff: { type: 'exponential', delay: JOB_BACKOFF_DELAY },
       removeOnComplete: { age: 3600, count: 1000 },
@@ -102,6 +107,7 @@ export class GenerationService {
     };
 
     const job = await this.generationQueue.add(GENERATION_JOB_NAME, jobData, {
+      priority: BULLMQ_PRIORITY[generation.priority],
       attempts: JOB_ATTEMPTS,
       backoff: { type: 'exponential', delay: JOB_BACKOFF_DELAY },
     });

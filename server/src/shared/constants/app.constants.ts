@@ -29,8 +29,14 @@ export const DEFAULT_TEXT_MODEL = 'openai';
 export const PROMPT_ENHANCE_TEMPERATURE = 0.7;
 
 export const IMAGE_GENERATION_TIMEOUT_MS = 120000;
-export const TEXT_GENERATION_TIMEOUT_MS = 30000;
-export const TEXT_HTTP_TIMEOUT_MS = 25000;
+export const TEXT_GENERATION_TIMEOUT_MS = 120000;
+export const TEXT_HTTP_TIMEOUT_MS = 110000;
+
+export const BULLMQ_PRIORITY = {
+  HIGH: 1,
+  NORMAL: 5,
+  LOW: 10,
+} as const;
 
 export const NODE_ENVIRONMENTS = {
   DEVELOPMENT: 'development',
