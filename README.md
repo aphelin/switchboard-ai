@@ -2,16 +2,23 @@
 
 A fullstack web application for generating AI content (images and text) through a prompt-based interface with async job processing, real-time status updates, and a gallery view.
 
+---
+
+> **AI Development Session Logs**
+> The full AI-assisted development chat history for this project is available in the [`AI-history/`](./AI-history) directory. Each file is a readable transcript of a Cursor AI session, covering architecture decisions, implementation details, and debugging.
+
+---
+
 ## Tech Stack
 
-| Layer | Technology |
-|-------|-----------|
+| Layer    | Technology                                                     |
+| -------- | -------------------------------------------------------------- |
 | Frontend | Next.js 16 (App Router), TypeScript, TailwindCSS v4, shadcn/ui |
-| Backend | NestJS 11, TypeScript |
-| Database | PostgreSQL 16 with Prisma ORM 7 |
-| Queue | BullMQ + Redis 7 |
-| AI | Pollinations.ai (real API) |
-| Infra | Docker + Docker Compose |
+| Backend  | NestJS 11, TypeScript                                          |
+| Database | PostgreSQL 16 with Prisma ORM 7                                |
+| Queue    | BullMQ + Redis 7                                               |
+| AI       | Pollinations.ai (real API)                                     |
+| Infra    | Docker + Docker Compose                                        |
 
 ## Architecture Overview
 
@@ -31,10 +38,11 @@ A fullstack web application for generating AI content (images and text) through 
 ```
 
 **Request flow:**
+
 1. User submits a prompt via the frontend
 2. Backend creates a Generation record (PENDING) and enqueues a BullMQ job
 3. API returns immediately (non-blocking)
-4. BullMQ worker picks up the job, calls Pollinations API via circuit breaker
+4. BullMQ worker picks up the job, calls the Pollinations API via circuit breaker
 5. On completion/failure, updates the DB and emits SSE events
 6. Frontend receives real-time updates via Server-Sent Events
 
@@ -52,62 +60,104 @@ A fullstack web application for generating AI content (images and text) through 
 ## Features
 
 ### Core
+
 - Prompt submission with type selection (Image / Text)
-- Async job processing -- API never blocks until generation completes
+- Async job processing — API never blocks until generation completes
 - Job status tracking: PENDING → GENERATING → COMPLETED / FAILED
 - Results display in gallery (images) and history (all types)
 - Full generation history with filtering and pagination
-- Graceful error handling for failures, timeouts, invalid prompts
+- Graceful error handling for failures, timeouts, and invalid prompts
 
 ### Bonus
+
 - **Prompt enhancement**: AI-powered prompt improvement before image generation
 - **Real-time updates**: SSE for live job status tracking
 - **Queue management**: Cancel pending jobs, retry failed ones
+- **Job priority**: High / Normal / Low priority levels for generation queue ordering
 - **User-defined parameters**: Model selection, image dimensions, seed
-- **Circuit breaker**: Graceful degradation when Pollinations API is down
+- **Circuit breaker**: Graceful degradation when the Pollinations API is down
 - **Structured logging**: Full request/response logging with Pino
-- **Rate limiting**: Throttler to prevent abuse
+- **Rate limiting**: Multi-tier throttler to prevent abuse (per-second, per-minute, per-hour)
 - **Multiple generation types**: Image + Text generation
-- **Docker**: Full docker-compose setup for one-command deployment
+- **Docker**: Full Docker Compose setup for one-command deployment (dev and production configs)
 
 ## Setup Instructions
 
 ### Prerequisites
 
 - Node.js 20+
-- Docker and Docker Compose (for containerized setup)
-- PostgreSQL 16 (for local dev without Docker)
-- Redis 7 (for local dev without Docker)
+- Docker and Docker Compose
 
-### Option 1: Docker (Recommended)
+### Environment Files
+
+The application requires `.env.development` and `.env.production` files in both the `server/` and `client/` directories. These files are not committed to the repository.
+
+**1. Server environment files**
+
+Create `server/.env.development` and `server/.env.production` with the following content:
+
+```bash
+# PostgreSQL
+POSTGRES_USER=postgres
+POSTGRES_PASSWORD=postgres
+POSTGRES_DB=mini_ai_toolkit
+DATABASE_URL=postgresql://postgres:postgres@postgres:5432/mini_ai_toolkit?schema=public
+
+# Redis
+REDIS_HOST=redis
+REDIS_PORT=6379
+
+# Pollinations API
+POLLINATIONS_API_KEY=your_pollinations_api_key
+
+# Server
+SERVER_PORT=4000
+CLIENT_URL=http://localhost:3000
+
+# Client build arg (used by docker-compose for NEXT_PUBLIC_API_URL substitution)
+NEXT_PUBLIC_API_URL=http://localhost:4000/api
+```
+
+For production, also add `NODE_ENV=production`.
+
+**2. Client environment files**
+
+Create `client/.env.development` and `client/.env.production` with the following content:
+
+```bash
+NEXT_PUBLIC_API_URL=http://localhost:4000/api
+NEXT_PUBLIC_APP_URL=http://localhost:3000
+```
+
+> A root-level `.env.example` file is provided as a reference for all variables.
+
+### Option 1: Docker — Development (Recommended)
 
 ```bash
 # Clone the repo
 git clone <repo-url>
 cd mini-ai-toolkit
 
-# Set your Pollinations API key
-cp .env.example .env
-# Edit .env and set POLLINATIONS_API_KEY=sk_your_key_here
-
-# Start everything
-docker compose up --build
+# Create the environment files as described above, then start everything
+docker compose -f docker-compose.dev.yml up --build
 ```
 
-The app will be available at:
-- Frontend: http://localhost:3000
-- Backend API: http://localhost:4000/api
+This starts PostgreSQL, Redis, the NestJS server (with hot reload), and the Next.js client (with Turbopack). Source code is volume-mounted for live changes.
 
-### Option 2: Local Development
+### Option 2: Docker — Production
 
 ```bash
-# 1. Start PostgreSQL and Redis locally (or via Docker)
-docker compose up postgres redis -d
+docker compose -f docker-compose.prod.yml up --build
+```
+
+### Option 3: Local Development (without Docker for app services)
+
+```bash
+# 1. Start PostgreSQL and Redis via Docker
+docker compose -f docker-compose.dev.yml up postgres redis -d
 
 # 2. Backend setup
 cd server
-cp ../.env.example .env
-# Edit .env with your values
 npm install
 npx prisma db push
 npm run start:dev
@@ -118,76 +168,67 @@ npm install
 npm run dev
 ```
 
+> When running locally (outside Docker), set `REDIS_HOST=localhost` and update `DATABASE_URL` to use `localhost` instead of `postgres` as the host.
+
+The app will be available at:
+
+- Frontend: http://localhost:3000
+- Backend API: http://localhost:4000/api
+
 ## Environment Variables
 
-| Variable | Description | Default |
-|----------|------------|---------|
-| `DATABASE_URL` | PostgreSQL connection string | `postgresql://postgres:postgres@localhost:5432/mini_ai_toolkit` |
-| `REDIS_HOST` | Redis host | `localhost` |
-| `REDIS_PORT` | Redis port | `6379` |
-| `POLLINATIONS_API_KEY` | Pollinations.ai API key (sk_...) | -- |
-| `SERVER_PORT` | Backend server port | `4000` |
-| `NEXT_PUBLIC_API_URL` | Backend API URL for frontend | `http://localhost:4000/api` |
+| Variable               | Description                                   | Default                                                                      |
+| ---------------------- | --------------------------------------------- | ---------------------------------------------------------------------------- |
+| `POSTGRES_USER`        | PostgreSQL username                           | `postgres`                                                                   |
+| `POSTGRES_PASSWORD`    | PostgreSQL password                           | `postgres`                                                                   |
+| `POSTGRES_DB`          | PostgreSQL database name                      | `mini_ai_toolkit`                                                            |
+| `DATABASE_URL`         | PostgreSQL connection string                  | `postgresql://postgres:postgres@postgres:5432/mini_ai_toolkit?schema=public` |
+| `REDIS_HOST`           | Redis host                                    | `redis` (Docker) / `localhost` (local)                                       |
+| `REDIS_PORT`           | Redis port                                    | `6379`                                                                       |
+| `POLLINATIONS_API_KEY` | Pollinations.ai API key                       | your_pollinations_api_key                                          |
+| `SERVER_PORT`          | Backend server port                           | `4000`                                                                       |
+| `CLIENT_URL`           | Allowed CORS origin for the frontend          | `http://localhost:3000`                                                      |
+| `NODE_ENV`             | Node environment (`development`/`production`) | `development`                                                                |
+| `NEXT_PUBLIC_API_URL`  | Backend API URL (used by the Next.js client)  | `http://localhost:4000/api`                                                  |
+| `NEXT_PUBLIC_APP_URL`  | Public app URL (used for sitemap/SEO)         | `http://localhost:3000`                                                      |
 
 ## API Endpoints
 
-| Method | Path | Description |
-|--------|------|-------------|
-| `POST` | `/api/generations` | Submit a new generation |
-| `GET` | `/api/generations` | List generations (paginated, filterable) |
-| `GET` | `/api/generations/:id` | Get single generation |
-| `POST` | `/api/generations/:id/retry` | Retry a failed generation |
-| `POST` | `/api/generations/:id/cancel` | Cancel a pending generation |
-| `GET` | `/api/generations/sse` | SSE stream for real-time updates |
-
-## Project Structure
-
-```
-mini-ai-toolkit/
-├── client/                          # Next.js 16 frontend
-│   ├── src/
-│   │   ├── app/                     # App Router pages
-│   │   ├── components/              # React components + shadcn/ui
-│   │   ├── hooks/                   # Custom hooks (SSE, data fetching)
-│   │   └── lib/                     # API client, types, utilities
-│   ├── Dockerfile
-│   └── .mcp.json                    # Next.js DevTools MCP config
-├── server/                          # NestJS backend
-│   ├── src/
-│   │   ├── config/                  # Configuration + Zod env validation
-│   │   ├── shared/                  # Filters, logger, throttler, circuit breaker
-│   │   ├── prisma/                  # Prisma module + service
-│   │   ├── generation/              # Core generation module
-│   │   │   ├── controllers/
-│   │   │   ├── services/
-│   │   │   ├── repositories/        # Repository pattern
-│   │   │   ├── processors/          # BullMQ job processor
-│   │   │   ├── dto/                 # Request validation DTOs
-│   │   │   └── types/
-│   │   ├── pollinations/            # Pollinations API integration
-│   │   └── sse/                     # Server-Sent Events
-│   ├── prisma/                      # Prisma schema
-│   └── Dockerfile
-├── docker-compose.yml
-├── .env.example
-└── README.md
-```
+| Method | Path                          | Description                                             |
+| ------ | ----------------------------- | ------------------------------------------------------- |
+| `GET`  | `/api/health`                 | Health check                                            |
+| `POST` | `/api/generations`            | Submit a new generation                                 |
+| `GET`  | `/api/generations`            | List generations (paginated, filterable by type/status) |
+| `GET`  | `/api/generations/:id`        | Get a single generation by ID                           |
+| `POST` | `/api/generations/:id/retry`  | Retry a failed generation                               |
+| `POST` | `/api/generations/:id/cancel` | Cancel a pending generation                             |
+| `GET`  | `/api/generations/sse`        | SSE stream for all real-time updates                    |
+| `GET`  | `/api/generations/sse/:id`    | SSE stream for a single generation's updates            |
 
 ## AI Integration
 
 **Real API**: This project uses the [Pollinations.ai](https://pollinations.ai) API for both image and text generation. Pollinations provides an OpenAI-compatible text API and a simple GET-based image generation endpoint.
 
-**Why Pollinations**: Free tier available, supports multiple models (Flux, GPT Image, Seedream), simple API design where the URL itself serves as the stable image URL, and OpenAI-compatible text generation.
+**Why Pollinations**: Free tier available, supports multiple models, simple API design where the URL itself serves as the stable image URL, and OpenAI-compatible text generation.
 
-## What I'd Improve With More Time
+**Supported image models:**
 
-- **Authentication**: Add user accounts with NextAuth.js for per-user generation history
-- **Image storage**: Upload generated images to S3/Cloudflare R2 instead of relying on Pollinations URLs
-- **WebSocket**: Migrate from SSE to WebSocket for bidirectional communication
-- **Testing**: Add unit tests (Jest) and E2E tests (Playwright) for both frontend and backend
-- **Monitoring**: Add Prometheus metrics, health checks dashboard, BullMQ board UI
-- **Rate limiting per user**: More granular throttling with user-level limits
+| Model            | Value          |
+| ---------------- | -------------- |
+| Flux Schnell     | `flux`         |
+| Flux 2 Dev       | `flux-2-dev`   |
+| GPT Image 1 Mini | `gptimage`     |
+| Seedream         | `seedream`     |
+| Imagen 4         | `imagen-4`     |
+| Grok Imagine     | `grok-imagine` |
+| Z-Image Turbo    | `zimage`       |
+| Dirtberry        | `dirtberry`    |
+
+## What I would improve With More Time
+
+- **Authentication/Authorization**: Add JWT-based authentication and authorization, user accounts
+- **Image storage**: Upload generated images to S3 instead of relying on Pollinations URLs, or store them locally and serve them with the `@nestjs/serve-static` library
+- **Testing**: Add unit tests and E2E tests for both frontend and backend
 - **Caching**: Redis-based response caching for gallery queries
 - **CI/CD**: GitHub Actions pipeline with linting, testing, Docker build, and deployment
-- **Prompt templates**: Pre-built prompt templates for common generation types
-- **Generation cost tracking**: Track API usage and costs per generation
+- **Video and audio generation**: Extend the generation pipeline to support video and audio since Pollinations.ai already provides those endpoints
