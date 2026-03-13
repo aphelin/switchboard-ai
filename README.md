@@ -5,11 +5,12 @@ A fullstack web application for generating AI content (images and text) through 
 ---
 
 > **AI Development Session Logs**
-> The full AI-assisted development chat history for this project is available in the [`AI-history/`](./AI-history) directory. Each file is a readable transcript of a Cursor AI session, covering architecture decisions, implementation details, and debugging.
+> The full AI-assisted development chat history for this project is available in the `[AI-history/](./AI-history)` directory. Each file is a readable transcript of a Cursor AI session, covering architecture decisions, implementation details, and debugging.
 
 ---
 
 ## Tech Stack
+
 
 | Layer    | Technology                                                     |
 | -------- | -------------------------------------------------------------- |
@@ -19,6 +20,7 @@ A fullstack web application for generating AI content (images and text) through 
 | Queue    | BullMQ + Redis 7                                               |
 | AI       | Pollinations.ai (real API)                                     |
 | Infra    | Docker + Docker Compose                                        |
+
 
 ## Architecture Overview
 
@@ -56,6 +58,10 @@ A fullstack web application for generating AI content (images and text) through 
 - **Opossum Circuit Breaker**: Prevents cascading failures when the external AI API is down
 - **SSE over WebSocket**: Simpler protocol for unidirectional server-to-client updates, auto-reconnect, works through proxies
 - **shadcn/ui**: High-quality, accessible components built on Radix UI with full customization
+
+### Design Philosophy
+
+The codebase deliberately avoids clean architecture patterns (e.g., strategy and factory for swappable AI providers). While such patterns would enable swapping AI implementations, they introduce significant boilerplate. This project follows **KISS** (Keep It Simple, Stupid) and **YAGNI** (You Aren't Gonna Need It) principles, prioritizing simplicity over hypothetical extensibility.
 
 ## Features
 
@@ -172,10 +178,11 @@ npm run dev
 
 The app will be available at:
 
-- Frontend: http://localhost:3000
-- Backend API: http://localhost:4000/api
+- Frontend: [http://localhost:3000](http://localhost:3000)
+- Backend API: [http://localhost:4000/api](http://localhost:4000/api)
 
 ## Environment Variables
+
 
 | Variable               | Description                                   | Default                                                                      |
 | ---------------------- | --------------------------------------------- | ---------------------------------------------------------------------------- |
@@ -183,7 +190,7 @@ The app will be available at:
 | `POSTGRES_PASSWORD`    | PostgreSQL password                           | `postgres`                                                                   |
 | `POSTGRES_DB`          | PostgreSQL database name                      | `mini_ai_toolkit`                                                            |
 | `DATABASE_URL`         | PostgreSQL connection string                  | `postgresql://postgres:postgres@postgres:5432/mini_ai_toolkit?schema=public` |
-| `REDIS_HOST`           | Redis host                                    | `redis` (Docker) / `localhost` (local)                                       |
+| `REDIS_HOST`           | Redis host                                    | `redis` (Docker) / `` (local)                                                |
 | `REDIS_PORT`           | Redis port                                    | `6379`                                                                       |
 | `POLLINATIONS_API_KEY` | Pollinations.ai API key                       | your_pollinations_api_key                                          |
 | `SERVER_PORT`          | Backend server port                           | `4000`                                                                       |
@@ -192,7 +199,9 @@ The app will be available at:
 | `NEXT_PUBLIC_API_URL`  | Backend API URL (used by the Next.js client)  | `http://localhost:4000/api`                                                  |
 | `NEXT_PUBLIC_APP_URL`  | Public app URL (used for sitemap/SEO)         | `http://localhost:3000`                                                      |
 
+
 ## API Endpoints
+
 
 | Method | Path                          | Description                                             |
 | ------ | ----------------------------- | ------------------------------------------------------- |
@@ -205,6 +214,7 @@ The app will be available at:
 | `GET`  | `/api/generations/sse`        | SSE stream for all real-time updates                    |
 | `GET`  | `/api/generations/sse/:id`    | SSE stream for a single generation's updates            |
 
+
 ## AI Integration
 
 **Real API**: This project uses the [Pollinations.ai](https://pollinations.ai) API for both image and text generation. Pollinations provides an OpenAI-compatible text API and a simple GET-based image generation endpoint.
@@ -212,6 +222,7 @@ The app will be available at:
 **Why Pollinations**: Free tier available, supports multiple models, simple API design where the URL itself serves as the stable image URL, and OpenAI-compatible text generation.
 
 **Supported image models:**
+
 
 | Model            | Value          |
 | ---------------- | -------------- |
@@ -224,6 +235,7 @@ The app will be available at:
 | Z-Image Turbo    | `zimage`       |
 | Dirtberry        | `dirtberry`    |
 
+
 ## What I would improve With More Time
 
 - **Authentication/Authorization**: Add JWT-based authentication and authorization, user accounts
@@ -232,3 +244,4 @@ The app will be available at:
 - **Caching**: Redis-based response caching for gallery queries
 - **CI/CD**: GitHub Actions pipeline with linting, testing, Docker build, and deployment
 - **Video and audio generation**: Extend the generation pipeline to support video and audio since Pollinations.ai already provides those endpoints
+
