@@ -6,6 +6,7 @@ import {
 } from '@nestjs/common';
 import { InjectQueue } from '@nestjs/bullmq';
 import { Queue } from 'bullmq';
+import { randomUUID } from 'node:crypto';
 import { GenerationRepository } from '../repositories/generation.repository';
 import { CreateGenerationDto } from '../dto/create-generation.dto';
 import { QueryGenerationDto } from '../dto/query-generation.dto';
@@ -53,6 +54,7 @@ export class GenerationService {
     };
 
     const job = await this.generationQueue.add(GENERATION_JOB_NAME, jobData, {
+      jobId: randomUUID(),
       priority: BULLMQ_PRIORITY[priority],
       attempts: JOB_ATTEMPTS,
       backoff: { type: 'exponential', delay: JOB_BACKOFF_DELAY },
@@ -109,6 +111,7 @@ export class GenerationService {
     };
 
     const job = await this.generationQueue.add(GENERATION_JOB_NAME, jobData, {
+      jobId: randomUUID(),
       priority: BULLMQ_PRIORITY[generation.priority],
       attempts: JOB_ATTEMPTS,
       backoff: { type: 'exponential', delay: JOB_BACKOFF_DELAY },

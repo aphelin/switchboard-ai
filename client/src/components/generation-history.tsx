@@ -1,6 +1,6 @@
 "use client";
 
-import { useSearchParams, useRouter } from "next/navigation";
+import { useSearchParams, useRouter, usePathname } from "next/navigation";
 import { useCallback } from "react";
 import { useGenerations } from "@/hooks/use-generations";
 import { useSSE } from "@/hooks/use-sse";
@@ -24,6 +24,7 @@ const ALL_FILTER = "all";
 export function GenerationHistory() {
   const searchParams = useSearchParams();
   const router = useRouter();
+  const pathname = usePathname();
 
   const typeFilter = searchParams.get("type") || ALL_FILTER;
   const statusFilter = searchParams.get("status") || ALL_FILTER;
@@ -44,9 +45,9 @@ export function GenerationHistory() {
         }
       }
       const qs = params.toString();
-      router.push(qs ? `?${qs}` : "", { scroll: false });
+      router.push(qs ? `${pathname}?${qs}` : pathname, { scroll: false });
     },
-    [searchParams, router],
+    [searchParams, router, pathname],
   );
 
   const { result, loading, error, handleSSEEvent, refetch } = useGenerations({
