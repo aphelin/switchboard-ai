@@ -34,6 +34,8 @@ export class GenerationProcessor extends WorkerHost {
     this.logger.log(`Processing generation ${generationId} (type: ${type})`);
 
     try {
+      if (await this.isCancelled(generationId)) return;
+
       await this.markAsGenerating(generationId);
 
       const effectivePrompt = await this.resolvePrompt(
@@ -41,6 +43,8 @@ export class GenerationProcessor extends WorkerHost {
         type,
         enhance,
       );
+
+      if (await this.isCancelled(generationId)) return;
 
       if (type === GenerationType.IMAGE) {
         await this.processImageGeneration(
@@ -62,6 +66,16 @@ export class GenerationProcessor extends WorkerHost {
     } catch (error) {
       await this.handleFailure(generationId, error);
     }
+  }
+
+  private async isCancelled(generationId: string): Promise<boolean> {
+    const generation =
+      await this.generationRepository.findById(generationId);
+    if (generation?.status === JobStatus.CANCELLED) {
+      this.logger.log(`Generation ${generationId} was cancelled, skipping`);
+      return true;
+    }
+    return false;
   }
 
   private async markAsGenerating(generationId: string): Promise<void> {
@@ -107,6 +121,8 @@ export class GenerationProcessor extends WorkerHost {
       negativePrompt: imageParams.negativePrompt,
     });
 
+    if (await this.isCancelled(generationId)) return;
+
     await this.generationRepository.updateStatus(
       generationId,
       JobStatus.COMPLETED,
@@ -140,6 +156,8 @@ export class GenerationProcessor extends WorkerHost {
       temperature: textParams.temperature,
       systemPrompt: textParams.systemPrompt,
     });
+
+    if (await this.isCancelled(generationId)) return;
 
     await this.generationRepository.updateStatus(
       generationId,

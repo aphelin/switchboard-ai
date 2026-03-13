@@ -11,7 +11,6 @@ A fullstack web application for generating AI content (images and text) through 
 
 ## Tech Stack
 
-
 | Layer    | Technology                                                     |
 | -------- | -------------------------------------------------------------- |
 | Frontend | Next.js 16 (App Router), TypeScript, TailwindCSS v4, shadcn/ui |
@@ -20,7 +19,6 @@ A fullstack web application for generating AI content (images and text) through 
 | Queue    | BullMQ + Redis 7                                               |
 | AI       | Pollinations.ai (real API)                                     |
 | Infra    | Docker + Docker Compose                                        |
-
 
 ## Architecture Overview
 
@@ -120,7 +118,6 @@ POLLINATIONS_API_KEY=your_pollinations_api_key
 SERVER_PORT=4000
 CLIENT_URL=http://localhost:3000
 
-# Client build arg (used by docker-compose for NEXT_PUBLIC_API_URL substitution)
 NEXT_PUBLIC_API_URL=http://localhost:4000/api
 ```
 
@@ -183,14 +180,13 @@ The app will be available at:
 
 ## Environment Variables
 
-
 | Variable               | Description                                   | Default                                                                      |
 | ---------------------- | --------------------------------------------- | ---------------------------------------------------------------------------- |
 | `POSTGRES_USER`        | PostgreSQL username                           | `postgres`                                                                   |
 | `POSTGRES_PASSWORD`    | PostgreSQL password                           | `postgres`                                                                   |
 | `POSTGRES_DB`          | PostgreSQL database name                      | `mini_ai_toolkit`                                                            |
 | `DATABASE_URL`         | PostgreSQL connection string                  | `postgresql://postgres:postgres@postgres:5432/mini_ai_toolkit?schema=public` |
-| `REDIS_HOST`           | Redis host                                    | `redis` (Docker) / `` (local)                                                |
+| `REDIS_HOST`           | Redis host                                    | `redis` (Docker) / (local)                                                   |
 | `REDIS_PORT`           | Redis port                                    | `6379`                                                                       |
 | `POLLINATIONS_API_KEY` | Pollinations.ai API key                       | your_pollinations_api_key                                          |
 | `SERVER_PORT`          | Backend server port                           | `4000`                                                                       |
@@ -199,9 +195,7 @@ The app will be available at:
 | `NEXT_PUBLIC_API_URL`  | Backend API URL (used by the Next.js client)  | `http://localhost:4000/api`                                                  |
 | `NEXT_PUBLIC_APP_URL`  | Public app URL (used for sitemap/SEO)         | `http://localhost:3000`                                                      |
 
-
 ## API Endpoints
-
 
 | Method | Path                          | Description                                             |
 | ------ | ----------------------------- | ------------------------------------------------------- |
@@ -214,7 +208,6 @@ The app will be available at:
 | `GET`  | `/api/generations/sse`        | SSE stream for all real-time updates                    |
 | `GET`  | `/api/generations/sse/:id`    | SSE stream for a single generation's updates            |
 
-
 ## AI Integration
 
 **Real API**: This project uses the [Pollinations.ai](https://pollinations.ai) API for both image and text generation. Pollinations provides an OpenAI-compatible text API and a simple GET-based image generation endpoint.
@@ -222,7 +215,6 @@ The app will be available at:
 **Why Pollinations**: Free tier available, supports multiple models, simple API design where the URL itself serves as the stable image URL, and OpenAI-compatible text generation.
 
 **Supported image models:**
-
 
 | Model            | Value          |
 | ---------------- | -------------- |
@@ -235,7 +227,6 @@ The app will be available at:
 | Z-Image Turbo    | `zimage`       |
 | Dirtberry        | `dirtberry`    |
 
-
 ## What I would improve With More Time
 
 - **Authentication/Authorization**: Add JWT-based authentication and authorization, user accounts
@@ -244,4 +235,3 @@ The app will be available at:
 - **Caching**: Redis-based response caching for gallery queries
 - **CI/CD**: GitHub Actions pipeline with linting, testing, Docker build, and deployment
 - **Video and audio generation**: Extend the generation pipeline to support video and audio since Pollinations.ai already provides those endpoints
-

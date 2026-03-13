@@ -47,12 +47,13 @@ export function Navbar() {
           <Button
             variant="ghost"
             size="icon"
+            className="h-10 w-10"
             onClick={() => setMobileOpen(!mobileOpen)}
           >
             {mobileOpen ? (
-              <X className="h-5 w-5" />
+              <X className="size-6" />
             ) : (
-              <Menu className="h-5 w-5" />
+              <Menu className="size-6" />
             )}
           </Button>
         </div>
@@ -64,15 +65,14 @@ export function Navbar() {
             className="fixed inset-0 top-14 z-40 bg-background/80 backdrop-blur-sm md:hidden"
             onClick={() => setMobileOpen(false)}
           />
-          <nav className="absolute left-0 right-0 top-14 z-50 border-b bg-background px-4 pb-3 pt-2 shadow-lg md:hidden">
+          <nav className="absolute left-0 right-0 top-14 z-50 border-b bg-background px-4 pb-4 pt-2 shadow-lg md:hidden">
             {links.map(({ href, label, icon: Icon }) => (
               <Link key={href} href={href} onClick={() => setMobileOpen(false)}>
                 <Button
                   variant={pathname === href ? 'secondary' : 'ghost'}
-                  className="w-full justify-start gap-2"
-                  size="sm"
+                  className="w-full justify-start gap-3 text-base py-3 h-auto"
                 >
-                  <Icon className="h-4 w-4" />
+                  <Icon className="h-5 w-5" />
                   {label}
                 </Button>
               </Link>

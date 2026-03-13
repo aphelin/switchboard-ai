@@ -1,4 +1,4 @@
-# Development: docker-compose -f docker-compose.dev.yml --env-file server/.env.development up --build
+# Development: docker compose -f docker-compose.dev.yml up --build
 
 services:
   postgres:
