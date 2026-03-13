@@ -1,15 +1,16 @@
-import type { NextConfig } from 'next';
+import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
-  output: 'standalone',
+  output: "standalone",
   images: {
     remotePatterns: [
       {
-        protocol: 'https',
-        hostname: 'gen.pollinations.ai',
+        protocol: "https",
+        hostname: "gen.pollinations.ai",
       },
     ],
   },
+  reactStrictMode: false,
 };
 
 export default nextConfig;

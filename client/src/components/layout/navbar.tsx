@@ -1,16 +1,16 @@
-'use client';
+"use client";
 
-import Link from 'next/link';
-import { usePathname } from 'next/navigation';
-import { useState } from 'react';
-import { Sparkles, Image, Clock, Menu, X } from 'lucide-react';
-import { cn } from '@/lib/utils';
-import { Button } from '@/components/ui/button';
+import Link from "next/link";
+import { usePathname } from "next/navigation";
+import { useState } from "react";
+import { Sparkles, Image, Clock, Menu, X } from "lucide-react";
+import { cn } from "@/lib/utils";
+import { Button } from "@/components/ui/button";
 
 const links = [
-  { href: '/', label: 'Generate', icon: Sparkles },
-  { href: '/gallery', label: 'Gallery', icon: Image },
-  { href: '/history', label: 'History', icon: Clock },
+  { href: "/", label: "Generate", icon: Sparkles },
+  { href: "/gallery", label: "Gallery", icon: Image },
+  { href: "/history", label: "History", icon: Clock },
 ];
 
 export function Navbar() {
@@ -29,11 +29,11 @@ export function Navbar() {
           {links.map(({ href, label, icon: Icon }) => (
             <Link key={href} href={href}>
               <Button
-                variant={pathname === href ? 'secondary' : 'ghost'}
+                variant={pathname === href ? "secondary" : "ghost"}
                 size="sm"
                 className={cn(
-                  'gap-2',
-                  pathname === href && 'bg-secondary font-medium',
+                  "gap-2",
+                  pathname === href && "bg-secondary font-medium",
                 )}
               >
                 <Icon className="h-4 w-4" />
@@ -69,7 +69,7 @@ export function Navbar() {
             {links.map(({ href, label, icon: Icon }) => (
               <Link key={href} href={href} onClick={() => setMobileOpen(false)}>
                 <Button
-                  variant={pathname === href ? 'secondary' : 'ghost'}
+                  variant={pathname === href ? "secondary" : "ghost"}
                   className="w-full justify-start gap-3 text-base py-3 h-auto"
                 >
                   <Icon className="h-5 w-5" />

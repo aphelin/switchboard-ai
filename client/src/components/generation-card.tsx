@@ -65,8 +65,16 @@ export function GenerationCard({
   return (
     <>
       <Card
-        className="group cursor-pointer overflow-hidden transition-shadow hover:shadow-md"
+        className="group cursor-pointer overflow-hidden transition-shadow hover:shadow-md focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
+        role="button"
+        tabIndex={0}
         onClick={() => setDialogOpen(true)}
+        onKeyDown={(e) => {
+          if (e.key === "Enter" || e.key === " ") {
+            e.preventDefault();
+            setDialogOpen(true);
+          }
+        }}
       >
         {isImage &&
         generation.status === JobStatus.COMPLETED &&

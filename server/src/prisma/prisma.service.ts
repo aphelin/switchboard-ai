@@ -30,6 +30,7 @@ export class PrismaService
   }
 
   async onModuleDestroy(): Promise<void> {
+    await this.$disconnect();
     this.logger.log('Database connection closed');
   }
 }

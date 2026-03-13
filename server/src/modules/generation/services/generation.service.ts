@@ -20,6 +20,8 @@ import { JobStatus, JobPriority } from 'generated/prisma/enums';
 import type {
   Generation,
   GenerationJobData,
+  ImageParameters,
+  TextParameters,
   PaginatedResult,
 } from '../types/generation.types';
 
@@ -103,7 +105,7 @@ export class GenerationService {
       prompt: generation.prompt,
       type: generation.type,
       enhance: false,
-      parameters: generation.parameters as any,
+      parameters: generation.parameters as ImageParameters | TextParameters | undefined,
     };
 
     const job = await this.generationQueue.add(GENERATION_JOB_NAME, jobData, {

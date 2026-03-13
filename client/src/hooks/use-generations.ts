@@ -3,11 +3,12 @@
 import { useState, useEffect, useCallback } from "react";
 import { getGenerations } from "@/lib/api";
 import { JobStatus } from "@/lib/constants";
+import type { GenerationType } from "@/lib/constants";
 import type { Generation, PaginatedResult, SseEvent } from "@/lib/types";
 
 interface UseGenerationsOptions {
-  type?: string;
-  status?: string;
+  type?: GenerationType | string;
+  status?: JobStatus | string;
   page?: number;
   limit?: number;
 }

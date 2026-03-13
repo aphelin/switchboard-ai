@@ -3,12 +3,12 @@ import {
   IsEnum,
   IsOptional,
   IsBoolean,
-  IsObject,
   MinLength,
   MaxLength,
   IsNumber,
   Min,
   Max,
+  ValidateNested,
 } from 'class-validator';
 import { Type } from 'class-transformer';
 import {
@@ -80,7 +80,7 @@ export class CreateGenerationDto {
   priority?: JobPriority;
 
   @IsOptional()
-  @IsObject()
-  @Type(() => Object)
+  @ValidateNested()
+  @Type(() => ImageParametersDto)
   parameters?: ImageParametersDto | TextParametersDto;
 }

@@ -44,7 +44,7 @@ export function GenerationHistory() {
         }
       }
       const qs = params.toString();
-      router.push(qs ? `?${qs}` : "?", { scroll: false });
+      router.push(qs ? `?${qs}` : "", { scroll: false });
     },
     [searchParams, router],
   );
@@ -58,6 +58,9 @@ export function GenerationHistory() {
 
   useSSE((event) => {
     handleSSEEvent(event);
+    if (event.status === JobStatus.COMPLETED) {
+      refetch();
+    }
     if (event.status === JobStatus.FAILED) {
       toast.error(event.error ?? "Generation failed");
     }
@@ -107,9 +110,9 @@ export function GenerationHistory() {
       ) : error ? (
         <div className="flex flex-col items-center gap-2 py-12 text-center">
           <p className="text-sm text-destructive">{error}</p>
-          <button onClick={refetch} className="text-sm text-primary underline">
+          <Button variant="link" size="sm" onClick={refetch}>
             Try again
-          </button>
+          </Button>
         </div>
       ) : !result?.data.length ? (
         <div className="flex flex-col items-center gap-3 py-16 text-center">

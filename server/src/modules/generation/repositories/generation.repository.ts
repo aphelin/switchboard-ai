@@ -43,7 +43,7 @@ export class GenerationRepository {
   }): Promise<PaginatedResult<Generation>> {
     const { type, status, page, limit } = params;
 
-    const where: Record<string, unknown> = {};
+    const where: Prisma.GenerationWhereInput = {};
     if (type) where.type = type;
     if (status) where.status = status;
 

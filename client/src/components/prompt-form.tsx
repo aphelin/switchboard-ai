@@ -37,7 +37,7 @@ export function PromptForm({ onCreated }: PromptFormProps) {
   const [showParams, setShowParams] = useState(false);
   const [width, setWidth] = useState("1024");
   const [height, setHeight] = useState("1024");
-  const [model, setModel] = useState("");
+  const [model, setModel] = useState("flux");
   const [seed, setSeed] = useState("");
 
   const handleSubmit = async (e: React.FormEvent<HTMLFormElement>) => {
@@ -54,11 +54,14 @@ export function PromptForm({ onCreated }: PromptFormProps) {
       };
 
       if (type === GenerationType.IMAGE && showParams) {
+        const parsedWidth = Number(width);
+        const parsedHeight = Number(height);
+        const parsedSeed = Number(seed);
         payload.parameters = {
           ...(model && { model }),
-          ...(width && { width: parseInt(width, 10) }),
-          ...(height && { height: parseInt(height, 10) }),
-          ...(seed && { seed: parseInt(seed, 10) }),
+          ...(!Number.isNaN(parsedWidth) && width && { width: parsedWidth }),
+          ...(!Number.isNaN(parsedHeight) && height && { height: parsedHeight }),
+          ...(!Number.isNaN(parsedSeed) && seed && { seed: parsedSeed }),
         };
       }
 
@@ -109,7 +112,7 @@ export function PromptForm({ onCreated }: PromptFormProps) {
           </div>
 
           <div>
-            <label className="mb-1 block text-xs text-muted-foreground">
+            <label htmlFor="priority-select" className="mb-1 block text-xs text-muted-foreground">
               Priority
             </label>
             <Select
@@ -166,10 +169,11 @@ export function PromptForm({ onCreated }: PromptFormProps) {
               {showParams && (
                 <div className="grid grid-cols-2 gap-3">
                   <div>
-                    <label className="mb-1 block text-xs text-muted-foreground">
+                    <label htmlFor="width-input" className="mb-1 block text-xs text-muted-foreground">
                       Width
                     </label>
                     <Input
+                      id="width-input"
                       type="number"
                       value={width}
                       onChange={(e) => setWidth(e.target.value)}
@@ -179,10 +183,11 @@ export function PromptForm({ onCreated }: PromptFormProps) {
                     />
                   </div>
                   <div>
-                    <label className="mb-1 block text-xs text-muted-foreground">
+                    <label htmlFor="height-input" className="mb-1 block text-xs text-muted-foreground">
                       Height
                     </label>
                     <Input
+                      id="height-input"
                       type="number"
                       value={height}
                       onChange={(e) => setHeight(e.target.value)}
@@ -192,15 +197,15 @@ export function PromptForm({ onCreated }: PromptFormProps) {
                     />
                   </div>
                   <div>
-                    <label className="mb-1 block text-xs text-muted-foreground">
+                    <label htmlFor="model-select" className="mb-1 block text-xs text-muted-foreground">
                       Model
                     </label>
                     <Select
                       value={model}
-                      onValueChange={(v) => setModel(v ?? "")}
+                      onValueChange={(v) => setModel(v ?? "flux")}
                     >
                       <SelectTrigger>
-                        <SelectValue placeholder="Default (Flux)" />
+                        <SelectValue />
                       </SelectTrigger>
                       <SelectContent>
                         <SelectItem value="flux">Flux Schnell</SelectItem>
@@ -218,10 +223,11 @@ export function PromptForm({ onCreated }: PromptFormProps) {
                     </Select>
                   </div>
                   <div>
-                    <label className="mb-1 block text-xs text-muted-foreground">
+                    <label htmlFor="seed-input" className="mb-1 block text-xs text-muted-foreground">
                       Seed (optional)
                     </label>
                     <Input
+                      id="seed-input"
                       type="number"
                       value={seed}
                       onChange={(e) => setSeed(e.target.value)}

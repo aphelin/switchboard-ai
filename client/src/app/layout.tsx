@@ -3,6 +3,7 @@ import { Geist, Geist_Mono } from 'next/font/google';
 import { Toaster } from '@/components/ui/sonner';
 import { Navbar } from '@/components/layout/navbar';
 import { ThemeProvider } from '@/components/layout/theme-provider';
+import { SseProvider } from '@/hooks/use-sse';
 import './globals.css';
 
 const geistSans = Geist({
@@ -59,11 +60,13 @@ export default function RootLayout({
         className={`${geistSans.variable} ${geistMono.variable} antialiased`}
       >
         <ThemeProvider>
-          <Navbar />
-          <main className="mx-auto min-h-[calc(100vh-3.5rem)] max-w-5xl px-4 py-6">
-            {children}
-          </main>
-          <Toaster />
+          <SseProvider>
+            <Navbar />
+            <main className="mx-auto min-h-[calc(100vh-3.5rem)] max-w-5xl px-4 py-6">
+              {children}
+            </main>
+            <Toaster />
+          </SseProvider>
         </ThemeProvider>
       </body>
     </html>

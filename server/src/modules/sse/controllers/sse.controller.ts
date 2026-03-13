@@ -1,4 +1,4 @@
-import { Controller, Sse, Param } from '@nestjs/common';
+import { Controller, Sse, Param, ParseUUIDPipe } from '@nestjs/common';
 import { Observable } from 'rxjs';
 import { SseService } from '../services/sse.service';
 
@@ -12,7 +12,9 @@ export class SseController {
   }
 
   @Sse('sse/:id')
-  streamOne(@Param('id') id: string): Observable<MessageEvent> {
+  streamOne(
+    @Param('id', ParseUUIDPipe) id: string,
+  ): Observable<MessageEvent> {
     return this.sseService.getEventStreamForGeneration(id);
   }
 }
