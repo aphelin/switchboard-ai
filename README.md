@@ -188,7 +188,7 @@ The app will be available at:
 | `DATABASE_URL`         | PostgreSQL connection string                  | `postgresql://postgres:postgres@postgres:5432/mini_ai_toolkit?schema=public` |
 | `REDIS_HOST`           | Redis host                                    | `redis` (Docker) / (local)                                                   |
 | `REDIS_PORT`           | Redis port                                    | `6379`                                                                       |
-| `POLLINATIONS_API_KEY` | Pollinations.ai API key                       | your_pollinations_api_key                                          |
+| `POLLINATIONS_API_KEY` | Pollinations.ai API key                       | none, get one at [pollinations.ai](https://pollinations.ai)                  |
 | `SERVER_PORT`          | Backend server port                           | `4000`                                                                       |
 | `CLIENT_URL`           | Allowed CORS origin for the frontend          | `http://localhost:3000`                                                      |
 | `NODE_ENV`             | Node environment (`development`/`production`) | `development`                                                                |
