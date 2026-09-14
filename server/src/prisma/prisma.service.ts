@@ -26,6 +26,7 @@ export class PrismaService
   }
 
   async onModuleInit(): Promise<void> {
+    await this.$connect();
     this.logger.log('Database connection established');
   }
 

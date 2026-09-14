@@ -1,3 +1,5 @@
+import type { EmbeddingProviderName, LlmProviderName } from './llm-presets';
+
 export interface AppCorsConfiguration {
   origin: string;
   credentials: boolean;
@@ -5,6 +7,8 @@ export interface AppCorsConfiguration {
 
 export interface AppConfig {
   port: number;
+  /** Public origin of this API, used to build absolute URLs (e.g. stored image URLs). */
+  publicUrl: string;
   cors: AppCorsConfiguration;
 }
 
@@ -22,9 +26,42 @@ export interface PollinationsConfig {
   baseUrl: string;
 }
 
+export interface StorageConfig {
+  dir: string;
+}
+
+export interface LlmProviderConfig {
+  name: LlmProviderName;
+  baseUrl: string;
+  apiKey: string;
+  model: string;
+}
+
+export interface LlmConfig {
+  primary: LlmProviderConfig;
+  fallback?: LlmProviderConfig;
+  /** Model used for cheap, low-stakes tasks (prompt enhancement, titles). */
+  fastModel: string;
+  /** Optional pricing override, USD per 1M tokens: {"model-id": {"input": 0.15, "output": 0.6}} */
+  pricingJson?: string;
+}
+
+export interface EmbeddingConfig {
+  provider: EmbeddingProviderName;
+  model: string;
+  baseUrl?: string;
+  apiKey?: string;
+  cacheDir: string;
+  /** Must match the vector(N) column size in prisma/schema.prisma. */
+  dimensions: number;
+}
+
 export interface AppConfiguration {
   app: AppConfig;
   database: DatabaseConfig;
   redis: RedisConfig;
   pollinations: PollinationsConfig;
+  storage: StorageConfig;
+  llm: LlmConfig;
+  embedding: EmbeddingConfig;
 }

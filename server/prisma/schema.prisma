@@ -1,11 +1,13 @@
 generator client {
-  provider     = "prisma-client"
-  output       = "../generated/prisma"
-  moduleFormat = "cjs"
+  provider        = "prisma-client"
+  output          = "../generated/prisma"
+  moduleFormat    = "cjs"
+  previewFeatures = ["postgresqlExtensions"]
 }
 
 datasource db {
-  provider = "postgresql"
+  provider   = "postgresql"
+  extensions = [vector]
 }
 
 enum GenerationType {
@@ -45,5 +47,99 @@ model Generation {
   @@index([status])
   @@index([type])
   @@index([priority])
+  @@index([createdAt])
+}
+
+// ---------------------------------------------------------------------------
+// RAG: documents are chunked, embedded and stored with pgvector.
+// ---------------------------------------------------------------------------
+
+enum DocumentStatus {
+  PENDING
+  PROCESSING
+  READY
+  FAILED
+}
+
+model Document {
+  id         String          @id @default(uuid())
+  title      String
+  source     String? // original file name, if uploaded
+  mimeType   String?
+  content    String
+  status     DocumentStatus  @default(PENDING)
+  chunkCount Int             @default(0)
+  error      String?
+  metadata   Json?
+  chunks     DocumentChunk[]
+  createdAt  DateTime        @default(now())
+  updatedAt  DateTime        @updatedAt
+
+  @@index([status])
+  @@index([createdAt])
+}
+
+model DocumentChunk {
+  id         String                       @id @default(uuid())
+  documentId String
+  document   Document                     @relation(fields: [documentId], references: [id], onDelete: Cascade)
+  index      Int
+  content    String
+  tokenCount Int
+  /// Dimension must match EMBEDDING_DIMENSIONS. HNSW + full-text indexes are created at startup (see DocumentsRepository).
+  embedding  Unsupported("vector(384)")?
+  createdAt  DateTime                     @default(now())
+
+  @@unique([documentId, index])
+}
+
+// ---------------------------------------------------------------------------
+// Chat: conversations with the tool-using agent (AI SDK UIMessage parts).
+// ---------------------------------------------------------------------------
+
+model Conversation {
+  id        String    @id @default(uuid())
+  title     String?
+  messages  Message[]
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+
+  @@index([updatedAt])
+}
+
+model Message {
+  id             String       @id
+  conversationId String
+  conversation   Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  role           String
+  parts          Json
+  metadata       Json?
+  createdAt      DateTime     @default(now())
+
+  @@index([conversationId, createdAt])
+}
+
+// ---------------------------------------------------------------------------
+// Observability: one row per LLM call (tokens, cost, latency, outcome).
+// ---------------------------------------------------------------------------
+
+model LlmCall {
+  id                String   @id @default(uuid())
+  traceId           String? // conversation id, generation id, eval run id...
+  name              String // e.g. "chat.stream", "prompt.enhance", "eval.judge"
+  provider          String
+  model             String
+  inputTokens       Int?
+  outputTokens      Int?
+  cachedInputTokens Int?
+  costUsd           Float?
+  latencyMs         Int
+  status            String // "ok" | "error"
+  error             String?
+  metadata          Json?
+  createdAt         DateTime @default(now())
+
+  @@index([traceId])
+  @@index([name])
   @@index([createdAt])
 }

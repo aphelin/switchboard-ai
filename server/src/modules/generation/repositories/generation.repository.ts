@@ -94,7 +94,12 @@ export class GenerationRepository {
     switch (status) {
       case JobStatus.PENDING:
       case JobStatus.GENERATING:
-        return { error: null, imageUrl: null, textResult: null, enhancedPrompt: null };
+        return {
+          error: null,
+          imageUrl: null,
+          textResult: null,
+          enhancedPrompt: null,
+        };
       case JobStatus.COMPLETED:
         return { error: null };
       case JobStatus.FAILED:

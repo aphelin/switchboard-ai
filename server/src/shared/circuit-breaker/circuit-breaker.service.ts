@@ -1,24 +1,31 @@
 import { Injectable, Logger } from '@nestjs/common';
 import CircuitBreaker, { type Options } from 'opossum';
 import { CIRCUIT_BREAKER_OPTIONS } from '../constants/app.constants';
+import { isUpstreamClientError } from '../errors/upstream.error';
 
-type AsyncFn<TResult> = (...args: unknown[]) => Promise<TResult>;
+type AsyncFn<TResult> = (...args: any[]) => Promise<TResult>;
 
 @Injectable()
 export class CircuitBreakerService {
   private readonly logger = new Logger(CircuitBreakerService.name);
 
+  /**
+   * Wraps an upstream call. Client errors (4xx: bad key, bad input) are NOT
+   * counted as failures, so a misconfiguration never looks like an outage.
+   * Errors are re-thrown untouched so callers can surface the real cause;
+   * an open circuit rejects with `code: 'EOPENBREAKER'`.
+   */
   create<TResult>(
     fn: AsyncFn<TResult>,
     options?: Partial<Options>,
-    fallback?: AsyncFn<TResult>,
-  ): CircuitBreaker {
-    const breaker = new CircuitBreaker(fn, {
+  ): CircuitBreaker<any[], TResult> {
+    const breaker = new CircuitBreaker<any[], TResult>(fn, {
       ...CIRCUIT_BREAKER_OPTIONS,
+      errorFilter: isUpstreamClientError,
       ...options,
     });
 
-    const name = fn.name || 'anonymous';
+    const name = options?.name ?? fn.name ?? 'anonymous';
 
     breaker.on('open', () =>
       this.logger.warn(`Circuit breaker OPENED for: ${name}`),
@@ -29,19 +36,11 @@ export class CircuitBreakerService {
     breaker.on('close', () =>
       this.logger.log(`Circuit breaker CLOSED for: ${name}`),
     );
-    breaker.on('fallback', () =>
-      this.logger.warn(`Circuit breaker FALLBACK triggered for: ${name}`),
-    );
     breaker.on('failure', (error: unknown) =>
       this.logger.error(
         `Circuit breaker FAILURE for: ${name} — ${error instanceof Error ? error.message : String(error)}`,
-        error instanceof Error ? error.stack : undefined,
       ),
     );
-
-    if (fallback) {
-      breaker.fallback(fallback);
-    }
 
     return breaker;
   }

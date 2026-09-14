@@ -1,5 +1,9 @@
 export { GenerationType, JobStatus, JobPriority } from 'generated/prisma/enums';
-import type { GenerationType, JobStatus, JobPriority } from 'generated/prisma/enums';
+import type {
+  GenerationType,
+  JobStatus,
+  JobPriority,
+} from 'generated/prisma/enums';
 
 export interface Generation {
   id: string;

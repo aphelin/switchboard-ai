@@ -37,7 +37,9 @@ const isCircuitBreakerError = (error: unknown): boolean => {
   );
 };
 
-const extractFromHttpException = (exception: HttpException): ExceptionResponse => {
+const extractFromHttpException = (
+  exception: HttpException,
+): ExceptionResponse => {
   const status = exception.getStatus();
   const exceptionResponse = exception.getResponse();
   let message = 'Internal server error';
@@ -128,6 +130,12 @@ export class HttpExceptionFilter implements ExceptionFilter {
     const result = this.resolveException(exception);
     this.logException(exception, result);
 
+    // Streaming responses (chat, images) may already be in flight; nothing more can be sent.
+    if (response.headersSent) {
+      response.end();
+      return;
+    }
+
     response.status(result.status).json({
       statusCode: result.status,
       error: result.error,
@@ -162,7 +170,10 @@ export class HttpExceptionFilter implements ExceptionFilter {
 
   private logException(exception: unknown, result: ExceptionResponse): void {
     if (result.status >= 500) {
-      this.logger.error({ err: exception, status: result.status }, result.message);
+      this.logger.error(
+        { err: exception, status: result.status },
+        result.message,
+      );
     } else {
       this.logger.warn({ status: result.status }, result.message);
     }

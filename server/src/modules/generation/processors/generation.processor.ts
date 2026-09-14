@@ -1,31 +1,49 @@
 import { Processor, WorkerHost } from '@nestjs/bullmq';
 import { Logger } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import { Job } from 'bullmq';
 import { GenerationRepository } from '../repositories/generation.repository';
 import { PollinationsService } from '../../pollinations/services/pollinations.service';
 import { SseService } from '../../sse/services/sse.service';
+import { LlmService } from '../../llm/services/llm.service';
+import { ModelRegistryService } from '../../llm/services/model-registry.service';
+import { PromptEnhancerService } from '../../llm/services/prompt-enhancer.service';
+import { StorageService } from '../../../shared/storage/storage.service';
 import {
   GENERATION_QUEUE,
   DEFAULT_IMAGE_MODEL,
-  DEFAULT_TEXT_MODEL,
 } from '../../../shared/constants/app.constants';
 import { GenerationType, JobStatus } from 'generated/prisma/enums';
+import type { AppConfiguration } from '../../../config/configuration.interface';
 import type {
   GenerationJobData,
   ImageParameters,
   TextParameters,
 } from '../types/generation.types';
 
+interface ResolvedPrompt {
+  prompt: string;
+  enhancedPrompt?: string;
+  negativePrompt?: string;
+}
+
 @Processor(GENERATION_QUEUE)
 export class GenerationProcessor extends WorkerHost {
   private readonly logger = new Logger(GenerationProcessor.name);
+  private readonly publicUrl: string;
 
   constructor(
     private readonly generationRepository: GenerationRepository,
     private readonly pollinationsService: PollinationsService,
     private readonly sseService: SseService,
+    private readonly llmService: LlmService,
+    private readonly modelRegistry: ModelRegistryService,
+    private readonly promptEnhancer: PromptEnhancerService,
+    private readonly storage: StorageService,
+    configService: ConfigService<AppConfiguration, true>,
   ) {
     super();
+    this.publicUrl = configService.get('app', { infer: true }).publicUrl;
   }
 
   async process(job: Job<GenerationJobData>): Promise<void> {
@@ -38,7 +56,8 @@ export class GenerationProcessor extends WorkerHost {
 
       await this.markAsGenerating(generationId);
 
-      const effectivePrompt = await this.resolvePrompt(
+      const resolved = await this.resolvePrompt(
+        generationId,
         prompt,
         type,
         enhance,
@@ -49,16 +68,14 @@ export class GenerationProcessor extends WorkerHost {
       if (type === GenerationType.IMAGE) {
         await this.processImageGeneration(
           generationId,
-          effectivePrompt,
+          resolved,
           parameters as ImageParameters,
-          effectivePrompt !== prompt ? effectivePrompt : undefined,
         );
       } else {
         await this.processTextGeneration(
           generationId,
-          effectivePrompt,
+          resolved,
           parameters as TextParameters,
-          effectivePrompt !== prompt ? effectivePrompt : undefined,
         );
       }
 
@@ -69,8 +86,7 @@ export class GenerationProcessor extends WorkerHost {
   }
 
   private async isCancelled(generationId: string): Promise<boolean> {
-    const generation =
-      await this.generationRepository.findById(generationId);
+    const generation = await this.generationRepository.findById(generationId);
     if (generation?.status === JobStatus.CANCELLED) {
       this.logger.log(`Generation ${generationId} was cancelled, skipping`);
       return true;
@@ -89,82 +105,104 @@ export class GenerationProcessor extends WorkerHost {
     });
   }
 
+  /** Optional structured prompt enhancement; falls back to the original prompt on any failure. */
   private async resolvePrompt(
+    generationId: string,
     prompt: string,
     type: GenerationType,
     enhance: boolean,
-  ): Promise<string> {
-    if (!enhance || type !== GenerationType.IMAGE) return prompt;
+  ): Promise<ResolvedPrompt> {
+    if (!enhance || type !== GenerationType.IMAGE) return { prompt };
 
-    const enhanced = await this.pollinationsService.enhancePrompt(prompt);
+    const enhanced = await this.promptEnhancer.enhance(prompt, generationId);
+    if (!enhanced) return { prompt };
+
     this.logger.log(
-      `Prompt enhanced: "${prompt}" -> "${enhanced.substring(0, 80)}..."`,
+      `Prompt enhanced: "${prompt}" -> "${enhanced.enhancedPrompt.substring(0, 80)}..."`,
     );
-    return enhanced;
+    return {
+      prompt: enhanced.enhancedPrompt,
+      enhancedPrompt: enhanced.enhancedPrompt,
+      negativePrompt: enhanced.negativePrompt ?? undefined,
+    };
   }
 
   private async processImageGeneration(
     generationId: string,
-    prompt: string,
+    resolved: ResolvedPrompt,
     parameters: ImageParameters | undefined,
-    enhancedPrompt: string | undefined,
   ): Promise<void> {
     const imageParams = parameters || {};
     const effectiveModel = imageParams.model || DEFAULT_IMAGE_MODEL;
+    const negativePrompt =
+      imageParams.negativePrompt || resolved.negativePrompt;
 
     const result = await this.pollinationsService.generateImage({
-      prompt,
+      prompt: resolved.prompt,
       model: effectiveModel,
       width: imageParams.width,
       height: imageParams.height,
       seed: imageParams.seed,
-      negativePrompt: imageParams.negativePrompt,
+      negativePrompt,
     });
 
     if (await this.isCancelled(generationId)) return;
+
+    // Store the bytes ourselves and hand out our own URL: the upstream URL contains the API key.
+    const storageKey = `images/${generationId}${this.storage.extensionFor(result.contentType)}`;
+    await this.storage.put(storageKey, result.data);
+    const imageUrl = `${this.publicUrl}/api/generations/${generationId}/image?v=${Date.now()}`;
 
     await this.generationRepository.updateStatus(
       generationId,
       JobStatus.COMPLETED,
       {
-        imageUrl: result.imageUrl,
-        enhancedPrompt,
-        parameters: { ...imageParams, model: effectiveModel },
+        imageUrl,
+        enhancedPrompt: resolved.enhancedPrompt,
+        parameters: {
+          ...imageParams,
+          model: effectiveModel,
+          ...(negativePrompt && { negativePrompt }),
+          storageKey,
+        },
       },
     );
 
     this.sseService.emitGenerationComplete({
       generationId,
       status: JobStatus.COMPLETED,
-      imageUrl: result.imageUrl,
-      enhancedPrompt,
+      imageUrl,
+      enhancedPrompt: resolved.enhancedPrompt,
     });
   }
 
   private async processTextGeneration(
     generationId: string,
-    prompt: string,
+    resolved: ResolvedPrompt,
     parameters: TextParameters | undefined,
-    enhancedPrompt: string | undefined,
   ): Promise<void> {
     const textParams = parameters || {};
-    const effectiveModel = textParams.model || DEFAULT_TEXT_MODEL;
+    const modelSelector = textParams.model || 'main';
 
-    const result = await this.pollinationsService.generateText({
-      prompt,
-      model: effectiveModel,
+    const result = await this.llmService.generateText({
+      name: 'generation.text',
+      traceId: generationId,
+      model: modelSelector,
+      instructions: textParams.systemPrompt,
+      prompt: resolved.prompt,
       temperature: textParams.temperature,
-      systemPrompt: textParams.systemPrompt,
     });
 
     if (await this.isCancelled(generationId)) return;
+
+    const effectiveModel = this.modelRegistry.resolveModelId(modelSelector);
 
     await this.generationRepository.updateStatus(
       generationId,
       JobStatus.COMPLETED,
       {
         textResult: result.text,
-        enhancedPrompt,
+        enhancedPrompt: resolved.enhancedPrompt,
         parameters: { ...textParams, model: effectiveModel },
       },
     );
@@ -173,7 +211,7 @@ export class GenerationProcessor extends WorkerHost {
       generationId,
       status: JobStatus.COMPLETED,
       textResult: result.text,
-      enhancedPrompt,
+      enhancedPrompt: resolved.enhancedPrompt,
     });
   }
 

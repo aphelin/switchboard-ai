@@ -7,7 +7,10 @@ import {
 import { InjectQueue } from '@nestjs/bullmq';
 import { Queue } from 'bullmq';
 import { randomUUID } from 'node:crypto';
+import { defer, firstValueFrom, merge } from 'rxjs';
+import { filter, map, timeout } from 'rxjs/operators';
 import { GenerationRepository } from '../repositories/generation.repository';
+import { SseService } from '../../sse/services/sse.service';
 import { CreateGenerationDto } from '../dto/create-generation.dto';
 import { QueryGenerationDto } from '../dto/query-generation.dto';
 import {
@@ -26,12 +29,19 @@ import type {
   PaginatedResult,
 } from '../types/generation.types';
 
+const TERMINAL_STATUSES = new Set<string>([
+  JobStatus.COMPLETED,
+  JobStatus.FAILED,
+  JobStatus.CANCELLED,
+]);
+
 @Injectable()
 export class GenerationService {
   private readonly logger = new Logger(GenerationService.name);
 
   constructor(
     private readonly generationRepository: GenerationRepository,
+    private readonly sseService: SseService,
     @InjectQueue(GENERATION_QUEUE) private readonly generationQueue: Queue,
   ) {}
 
@@ -68,7 +78,9 @@ export class GenerationService {
     return { ...generation, jobId: job.id! };
   }
 
-  async findAll(query: QueryGenerationDto): Promise<PaginatedResult<Generation>> {
+  async findAll(
+    query: QueryGenerationDto,
+  ): Promise<PaginatedResult<Generation>> {
     return this.generationRepository.findMany({
       type: query.type,
       status: query.status,
@@ -83,6 +95,43 @@ export class GenerationService {
       throw new NotFoundException(`Generation ${id} not found`);
     }
     return generation;
+  }
+
+  /**
+   * Resolves once the generation reaches a terminal status, or after the
+   * timeout (in which case the current record is returned as-is). Lets
+   * synchronous callers (agent tools, MCP) build on the async queue without polling.
+   */
+  async waitForTerminalStatus(
+    id: string,
+    timeoutMs: number,
+  ): Promise<Generation> {
+    const fromEvents$ = this.sseService.events$.pipe(
+      filter(
+        (event) =>
+          'generationId' in event.payload &&
+          event.payload.generationId === id &&
+          TERMINAL_STATUSES.has(event.payload.status),
+      ),
+      map(() => undefined),
+    );
+    // Checked after subscribing to the event bus, so a status change can't slip between the two.
+    const fromDatabase$ = defer(() => this.findOne(id)).pipe(
+      filter((generation) => TERMINAL_STATUSES.has(generation.status)),
+      map(() => undefined),
+    );
+
+    try {
+      await firstValueFrom(
+        merge(fromEvents$, fromDatabase$).pipe(timeout(timeoutMs)),
+      );
+    } catch {
+      this.logger.warn(
+        `Timed out after ${timeoutMs}ms waiting for generation ${id}`,
+      );
+    }
+
+    return this.findOne(id);
   }
 
   async retry(id: string): Promise<Generation> {
@@ -107,7 +156,10 @@ export class GenerationService {
       prompt: generation.prompt,
       type: generation.type,
       enhance: false,
-      parameters: generation.parameters as ImageParameters | TextParameters | undefined,
+      parameters: generation.parameters as
+        | ImageParameters
+        | TextParameters
+        | undefined,
     };
 
     const job = await this.generationQueue.add(GENERATION_JOB_NAME, jobData, {
@@ -150,6 +202,10 @@ export class GenerationService {
       id,
       JobStatus.CANCELLED,
     );
+    this.sseService.emitStatusUpdate({
+      generationId: id,
+      status: JobStatus.CANCELLED,
+    });
     this.logger.log(`Generation ${id} cancelled`);
     return updated;
   }

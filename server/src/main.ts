@@ -1,6 +1,7 @@
 import { NestFactory } from '@nestjs/core';
 import { ValidationPipe } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
+import type { NestExpressApplication } from '@nestjs/platform-express';
 import { Logger } from 'nestjs-pino';
 import helmet from 'helmet';
 import { AppModule } from './app.module';
@@ -8,7 +9,9 @@ import { HttpExceptionFilter } from './shared/filters/http-exception.filter';
 import type { AppConfiguration } from './config/configuration.interface';
 
 async function bootstrap() {
-  const app = await NestFactory.create(AppModule, { bufferLogs: true });
+  const app = await NestFactory.create<NestExpressApplication>(AppModule, {
+    bufferLogs: true,
+  });
 
   const configService =
     app.get<ConfigService<AppConfiguration, true>>(ConfigService);
@@ -16,6 +19,8 @@ async function bootstrap() {
 
   app.useLogger(app.get(Logger));
   app.setGlobalPrefix('api');
+  // Chat requests carry the whole conversation (tool results included).
+  app.useBodyParser('json', { limit: '5mb' });
 
   app.use(
     helmet({
@@ -26,6 +31,7 @@ async function bootstrap() {
   app.enableCors({
     origin: appConfig.cors.origin,
     credentials: appConfig.cors.credentials,
+    exposedHeaders: ['mcp-session-id', 'x-vercel-ai-ui-message-stream'],
   });
 
   app.useGlobalPipes(
