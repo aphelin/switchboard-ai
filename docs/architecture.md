@@ -34,6 +34,7 @@ Server modules (`server/src/modules`):
 | `mcp` | Exposes the toolkit as an MCP server so external agents (Claude Code, Claude Desktop) can use it. |
 | `sse` | In-process event bus + Server-Sent Events endpoints (generation and document status). |
 | `auth` | Better Auth (sessions, API keys), global `AuthGuard`, `@CurrentUser()`, per-user rate limits, daily AI budget, legacy-data claim. |
+| `providers` | Model catalog for the picker, users' own provider keys (verified, encrypted), and `ModelRouterService`, which decides per request whether a call runs on the app's key or the user's. |
 
 Shared building blocks (`server/src/shared`): circuit breaker, local object storage, upstream-error normalisation, prompt-injection scanner, Reciprocal Rank Fusion, Zod validation pipe.
 
@@ -49,7 +50,8 @@ Shared building blocks (`server/src/shared`): circuit breaker, local object stor
 2. **Circuit breaker per provider** (opossum). Repeated outages open the circuit and calls fail fast instead of piling up. 4xx responses (bad key, bad model, invalid schema) are *not* counted as failures: a misconfiguration must never look like an outage. This was a real bug in the original code, where a 401 was reported as "service temporarily unavailable".
 3. **Fallback provider** (optional `LLM_FALLBACK_*`). On an outage (not on 4xx) the call is retried once on a second provider.
 4. **Structured output with repair.** `generateObject(schema, …)` asks the model for JSON matching a Zod schema (`Output.object`, native JSON-schema mode where supported). If validation fails, the error and the invalid text are fed back once so the model can repair its answer; then the caller decides the fallback (e.g. prompt enhancement falls back to the original prompt).
-5. **Tracing.** Every call (success or failure) is recorded with tokens, estimated cost, latency, finish reason and the requested/actual model.
+5. **Tracing.** Every call (success or failure) is recorded with tokens, estimated cost, latency, finish reason, the requested/actual model and who pays (`keySource`).
+6. **Routes.** Callers can pass a `ModelRoute`: the platform provider above (the default), or a provider on the user's own key. See §10.
 
 ### Cost estimation
 
@@ -235,7 +237,43 @@ Rows created before auth have no owner, so `userId` is nullable for now (expand)
 
 ---
 
-## 10. Decisions and trade-offs (short list)
+## 10. Models and bring your own key (`modules/providers`)
+
+### What it does
+
+- **Two kinds of models.** *Included* models run on the app's provider key (Pollinations by default), with the fallback provider and the daily budget. OpenAI, Anthropic and Google models run on the *user's own key*. The catalog (`llm/catalog/model-catalog.ts`) is deliberately short: one flagship, one balanced and one fast model per provider, each with tool calling, structured output and a list price. Anyone can use the app with no key; anyone who wants Claude, GPT or Gemini pays on their own account.
+- **Native providers, not a shim.** Each vendor goes through its own AI SDK package (`@ai-sdk/openai` on the Responses API, `@ai-sdk/anthropic`, `@ai-sdk/google`), so tool calling, structured output and caching use each API directly. Claude chats mark the system prompt as a cache breakpoint (tools and instructions are cached, read at a tenth of the input price), and Claude Opus 5 has server-side refusal fallback enabled. Some differences the SDKs absorb: Opus 5, Sonnet 5 and GPT-5.x reasoning models reject `temperature`, so it is dropped with a warning.
+- **Routing per request.** The browser sends a catalog id (`anthropic:claude-sonnet-5`). `ModelRouterService.resolve(userId, model, { tools })` turns it into a `ModelRoute` or rejects it: unknown ids and platform models that are not offered return 400 `Unknown Model` (otherwise any raw id would reach the platform provider on the app's bill), and a provider without a stored key returns 400 `Provider Key Required`. This happens before anything is queued and before the budget check. Generation workers resolve the model again, so a key removed while a job waited is not used.
+- **Where a call runs.** Inside `LlmService` a route becomes one or more *call targets* (provider, model, breaker, who pays). The platform route has a primary and an optional fallback target. A user-key route has exactly one: a failed call is never retried on another vendor or on the app's key, because that would change who pays and who sees the data. User-key calls get one breaker per vendor, and unlike the platform breakers it ignores 429s: one user's rate limit says nothing about the vendor's health.
+- **Cost.** Every trace has `keySource` (`platform` | `user`). The budget sums only platform spend; `/api/me` reports own-key spend separately; the Traces page marks "your key". Catalog prices are keyed by catalog id, so they never collide with the Pollinations price table loaded at startup.
+
+### Key storage
+
+1. **Verified before saving.** One request on the provider's fast model, capped at 16 output tokens (OpenAI's minimum). 401/403 → 400 `Invalid Provider Key`, nothing stored. 429 → stored with a warning (the key works, the account is rate limited or out of quota). Unreachable → 502, nothing stored.
+2. **Encrypted with AES-256-GCM** (`shared/crypto/secret-box.ts`): a random IV per value, an authentication tag, and associated data `provider-credential:<userId>:<provider>`. A ciphertext copied into another user's row fails to decrypt instead of working for them. The `v1.` prefix leaves room for key rotation. `CREDENTIALS_ENCRYPTION_KEY` is separate from `BETTER_AUTH_SECRET` (different purpose, rotated independently); unset turns the feature off, a malformed value stops the server at startup.
+3. **Never returned.** Endpoints return the last 4 characters only; the model DTO is an explicit allowlist. The plaintext is decrypted per request, for its owner, and lives only in the route's closure. Every SDK call passes the key explicitly, because the SDKs would otherwise fall back to server environment variables.
+4. **Redacted everywhere an error can go.** Provider error bodies can echo the key, so `redactSecrets` masks key shapes and the exact key in upstream errors, trace records, streamed chat errors and circuit-breaker logs. Request logs contain only method, URL and status. The breaker log was a real leak, caught by a unit test.
+
+In production the encryption key would come from a KMS (envelope encryption: a data key per row, wrapped by the KMS) or the keys would live in a secrets manager; `SecretBox` is the single place that would change.
+
+### How it is tested
+
+- Unit: `SecretBox` (tampering, another user's context, another key), redaction, catalog invariants, the router (platform default, unlisted models, never another user's key), and `LlmService` with mock models (trace fields and catalog price, 401 explained without the key, no fallback onto the platform, the Anthropic cache breakpoint).
+- `npm run test:providers`: 28 checks against a running API with two users. Alice's key is a fake written to the database exactly as the service stores it, so no provider account is needed and Anthropic's 401 exercises the error path. Bob asking for the same model gets `Provider Key Required`; Bob's delete doesn't remove Alice's key; no response ever contains a key; the call is traced as Anthropic on Alice's key and invisible to Bob. With `E2E_ANTHROPIC_API_KEY` set it also saves a real key and checks that a chat turn costs money on the user's side and nothing on the budget.
+
+### Questions to be ready for
+
+- Why bring-your-own-key instead of one OpenRouter key? (The app stays free to try, and heavy users pay for their own usage. One gateway key is simpler, but the operator pays for everyone and provider-specific features go through a translation layer.)
+- Why encrypt the provider keys but hash the MCP API keys? (The server must send the provider key to the provider, so it needs the plaintext back. An API key only needs to be *checked*, so a hash is enough.)
+- What does the associated data protect against? (Someone with write access to the table moving an encrypted key to their own row.)
+- What if `CREDENTIALS_ENCRYPTION_KEY` leaks, or must rotate? (Add `v2` with a new key, decrypt with either and re-encrypt on read or in a batch; in production, KMS envelope encryption and rotation.)
+- Why no fallback for user-key calls? (Moving a call to another vendor or onto the app's key changes who pays and who sees the data; the user chose a provider.)
+- How is the browser's model choice made safe? (Only catalog ids, capability checks, key lookup by the session's user id; the route is built on the server.)
+- Which provider differences did you hit? (Sampling parameters removed on the newest reasoning models, OpenAI's 16-token minimum, explicit cache breakpoints on Anthropic, SDKs reading keys from environment variables when none is passed.)
+
+---
+
+## 11. Decisions and trade-offs (short list)
 
 | Decision | Alternative | Why this one |
 |---|---|---|
@@ -250,7 +288,11 @@ Rows created before auth have no owner, so `userId` is nullable for now (expand)
 | Better Auth in the API | NextAuth in Next.js, Clerk/Auth0, hand-written JWT | Actively maintained, users stay in our Postgres, one auth for browsers and MCP clients, no custom crypto. |
 | Database sessions | JWT + refresh tokens | Instant revocation; one API and one database, so stateless verification buys nothing. |
 | Nullable `userId` + claim on first account | Wipe dev data, or a NOT NULL column with a backfill script | Expand/contract: no data loss, no downtime, reversible. |
+| Bring-your-own-key for OpenAI, Anthropic, Google | One gateway key (OpenRouter) paid by the app | Free to try, heavy users pay their own way, native provider features. |
+| Native AI SDK provider per vendor | OpenAI-compatible endpoints for everyone | Tool calling, structured output and prompt caching work as each vendor designed them. |
+| AES-256-GCM with per-row associated data, key from env | KMS / Vault | No extra infrastructure locally; `SecretBox` is where envelope encryption would plug in. |
+| No fallback on user-key calls | Retry on the platform provider | Who pays and who sees the data must not change silently. |
 
-Known gaps, deliberately left: password reset and email verification, roles and document sharing, the contract step for `userId`, conversation summarisation, S3 storage, hosted tracing, migrations, reranking model.
+Known gaps, deliberately left: password reset and email verification, roles and document sharing, the contract step for `userId`, conversation summarisation, S3 storage, hosted tracing, migrations, reranking model, KMS-backed key encryption and a key-rotation job, image generation on users' OpenAI keys, cross-model eval comparison.
 
 One more worth knowing: the SSE event bus is **in-process**. With a single API process (the default) that is fine; if workers ever run as separate processes (e.g. the eval runner, or a scaled-out deployment), their status events never reach the API's SSE endpoints and the UI falls back to polling. The fix is a Redis pub/sub bridge behind `SseService`, which BullMQ's Redis already makes cheap.

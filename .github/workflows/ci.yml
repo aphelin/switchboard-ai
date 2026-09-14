@@ -92,6 +92,8 @@ jobs:
       STORAGE_DIR: ./storage
       # Throwaway value: CI never serves real users, but the config requires a 32+ char secret.
       BETTER_AUTH_SECRET: ci-only-secret-not-used-for-real-sessions
+      # Throwaway AES key (32 zero bytes): CI stores no real provider keys.
+      CREDENTIALS_ENCRYPTION_KEY: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=
       TRANSFORMERS_CACHE_DIR: ./.cache/transformers
     steps:
       - uses: actions/checkout@v4

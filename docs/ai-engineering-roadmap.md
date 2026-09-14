@@ -24,6 +24,8 @@ Notes for extending Mini AI Toolkit into a portfolio project that covers a typic
 
 **Implemented on 2026-09-13** (see [`architecture.md`](./architecture.md) for the design): LLM layer with provider abstraction, circuit breaker, fallback, structured outputs and cost tracing; RAG (pgvector, hybrid search, RRF, injection scanner); streaming tool-using chat agent with human approval; MCP server; evals with LLM-as-judge; CI workflow; Documents / Chat / Traces pages.
 
+**Implemented on 2026-09-14:** authentication and per-user data isolation (architecture §9); multi-provider models with bring-your-own-key: OpenAI, Anthropic and Google on users' encrypted keys next to the free Pollinations default, with a model picker (architecture §10). Next: run the eval set across providers and compare quality, cost and latency.
+
 **Running locally without Docker for app services:**
 
 - `docker compose -f docker-compose.dev.yml up postgres redis -d`
