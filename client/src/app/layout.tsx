@@ -62,7 +62,7 @@ export default function RootLayout({
         <ThemeProvider>
           <SseProvider>
             <Navbar />
-            <main className="mx-auto min-h-[calc(100vh-3.5rem)] max-w-5xl px-4 py-6">
+            <main className="mx-auto min-h-[calc(100vh-3.5rem)] max-w-6xl px-4 py-6">
               {children}
             </main>
             <Toaster />

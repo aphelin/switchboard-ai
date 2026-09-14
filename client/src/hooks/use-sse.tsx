@@ -4,6 +4,7 @@ import {
   createContext,
   useContext,
   useEffect,
+  useEffectEvent,
   useRef,
   useCallback,
   useState,
@@ -21,54 +22,49 @@ interface SseContextValue {
 
 const SseContext = createContext<SseContextValue | null>(null);
 
+const RECONNECT_DELAY_MS = 3000;
+
 export function SseProvider({ children }: { children: ReactNode }) {
   const [connected, setConnected] = useState(false);
   const subscribersRef = useRef(new Set<SseCallback>());
-  const eventSourceRef = useRef<EventSource | null>(null);
-  const reconnectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-
-  const cleanup = useCallback(() => {
-    if (reconnectTimerRef.current) {
-      clearTimeout(reconnectTimerRef.current);
-      reconnectTimerRef.current = null;
-    }
-    if (eventSourceRef.current) {
-      eventSourceRef.current.close();
-      eventSourceRef.current = null;
-    }
-  }, []);
-
-  const connect = useCallback(() => {
-    cleanup();
-
-    const eventSource = new EventSource(getSSEUrl());
-    eventSourceRef.current = eventSource;
-
-    eventSource.onopen = () => setConnected(true);
-
-    eventSource.onmessage = (event) => {
-      try {
-        const data = JSON.parse(event.data);
-        if (data.type === "ping") return;
-        subscribersRef.current.forEach((cb) => cb(data as SseEvent));
-      } catch {
-        // ignore malformed events
-      }
-    };
-
-    eventSource.onerror = () => {
-      if (eventSourceRef.current !== eventSource) return;
-      setConnected(false);
-      eventSource.close();
-      eventSourceRef.current = null;
-      reconnectTimerRef.current = setTimeout(() => connect(), 3000);
-    };
-  }, [cleanup]);
 
   useEffect(() => {
+    let eventSource: EventSource | null = null;
+    let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+    let disposed = false;
+
+    function connect() {
+      if (disposed) return;
+      eventSource = new EventSource(getSSEUrl());
+
+      eventSource.onopen = () => setConnected(true);
+
+      eventSource.onmessage = (event) => {
+        try {
+          const data = JSON.parse(event.data);
+          if (data.type === "ping") return;
+          subscribersRef.current.forEach((cb) => cb(data as SseEvent));
+        } catch {
+          // ignore malformed events
+        }
+      };
+
+      eventSource.onerror = () => {
+        setConnected(false);
+        eventSource?.close();
+        eventSource = null;
+        reconnectTimer = setTimeout(connect, RECONNECT_DELAY_MS);
+      };
+    }
+
     connect();
-    return cleanup;
-  }, [connect, cleanup]);
+
+    return () => {
+      disposed = true;
+      if (reconnectTimer) clearTimeout(reconnectTimer);
+      eventSource?.close();
+    };
+  }, []);
 
   const subscribe = useCallback((cb: SseCallback) => {
     subscribersRef.current.add(cb);
@@ -91,22 +87,20 @@ export function useSSE(
   const ctx = useContext(SseContext);
   if (!ctx) throw new Error("useSSE must be used within SseProvider");
 
-  const onEventRef = useRef(onEvent);
-  onEventRef.current = onEvent;
-  const onReconnectRef = useRef(onReconnect);
-  onReconnectRef.current = onReconnect;
+  const handleEvent = useEffectEvent(onEvent);
+  const handleReconnect = useEffectEvent(() => onReconnect?.());
   const wasConnectedRef = useRef(false);
 
   useEffect(() => {
     const unsubscribe = ctx.subscribe((event) => {
-      onEventRef.current(event);
+      handleEvent(event);
     });
     return unsubscribe;
   }, [ctx]);
 
   useEffect(() => {
     if (ctx.connected && wasConnectedRef.current) {
-      onReconnectRef.current?.();
+      handleReconnect();
     }
     wasConnectedRef.current = true;
   }, [ctx.connected]);

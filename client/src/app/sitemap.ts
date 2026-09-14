@@ -22,5 +22,23 @@ export default function sitemap(): MetadataRoute.Sitemap {
       changeFrequency: 'always',
       priority: 0.7,
     },
+    {
+      url: `${APP_URL}/documents`,
+      lastModified: new Date(),
+      changeFrequency: 'daily',
+      priority: 0.7,
+    },
+    {
+      url: `${APP_URL}/chat`,
+      lastModified: new Date(),
+      changeFrequency: 'daily',
+      priority: 0.8,
+    },
+    {
+      url: `${APP_URL}/traces`,
+      lastModified: new Date(),
+      changeFrequency: 'always',
+      priority: 0.5,
+    },
   ];
 }

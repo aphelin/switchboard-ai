@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import Image from "next/image";
+import { GeneratedImage } from "@/components/generated-image";
 import { Card, CardContent } from "@/components/ui/card";
 import {
   Dialog,
@@ -80,7 +80,7 @@ export function GenerationCard({
         generation.status === JobStatus.COMPLETED &&
         generation.imageUrl ? (
           <div className="relative aspect-square overflow-hidden bg-muted">
-            <Image
+            <GeneratedImage
               src={generation.imageUrl}
               alt={generation.prompt}
               fill
@@ -174,7 +174,7 @@ export function GenerationCard({
               generation.status === JobStatus.COMPLETED &&
               generation.imageUrl && (
                 <div className="relative overflow-hidden rounded-lg">
-                  <Image
+                  <GeneratedImage
                     src={generation.imageUrl}
                     alt={generation.prompt}
                     width={1024}

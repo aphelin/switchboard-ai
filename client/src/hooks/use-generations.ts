@@ -20,24 +20,28 @@ export function useGenerations(options: UseGenerationsOptions = {}) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
+  const { type, status, page, limit } = options;
+
   const fetchData = useCallback(async () => {
     try {
       setLoading(true);
       setError(null);
-      const data = await getGenerations(options);
+      const data = await getGenerations({ type, status, page, limit });
       setResult(data);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to fetch");
     } finally {
       setLoading(false);
     }
-  }, [options.type, options.status, options.page, options.limit]);
+  }, [type, status, page, limit]);
 
   useEffect(() => {
     fetchData();
   }, [fetchData]);
 
   const handleSSEEvent = useCallback((event: SseEvent) => {
+    // The generations stream only carries generation events, but stay defensive.
+    if (!event.generationId) return;
     setResult((prev) => {
       if (!prev) return prev;
       const updated = prev.data.map((gen) => {

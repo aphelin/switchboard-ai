@@ -3,7 +3,16 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useState } from "react";
-import { Sparkles, Image, Clock, Menu, X } from "lucide-react";
+import {
+  Sparkles,
+  Image,
+  Clock,
+  Menu,
+  X,
+  FileText,
+  MessageSquare,
+  Activity,
+} from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 
@@ -11,6 +20,9 @@ const links = [
   { href: "/", label: "Generate", icon: Sparkles },
   { href: "/gallery", label: "Gallery", icon: Image },
   { href: "/history", label: "History", icon: Clock },
+  { href: "/documents", label: "Documents", icon: FileText },
+  { href: "/chat", label: "Chat", icon: MessageSquare },
+  { href: "/traces", label: "Traces", icon: Activity },
 ];
 
 export function Navbar() {
@@ -19,7 +31,7 @@ export function Navbar() {
 
   return (
     <header className="sticky top-0 z-50 w-full border-b bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60">
-      <div className="mx-auto flex h-14 max-w-5xl items-center px-4">
+      <div className="mx-auto flex h-14 max-w-6xl items-center px-4">
         <Link href="/" className="mr-6 flex items-center gap-2 font-semibold">
           <Sparkles className="h-5 w-5 text-primary" />
           <span className="hidden sm:inline">Mini AI Toolkit</span>
