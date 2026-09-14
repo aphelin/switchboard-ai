@@ -1,5 +1,9 @@
 node_modules
 dist
-.env
-.env.*
-*.log
+generated
+.env*
+!.env.example
+.cache
+storage
+evals/results
+coverage

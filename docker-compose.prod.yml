@@ -2,7 +2,7 @@
 
 services:
   postgres:
-    image: postgres:16-alpine
+    image: pgvector/pgvector:pg16
     env_file:
       - server/.env.production
     volumes:
@@ -43,6 +43,10 @@ services:
       timeout: 5s
       retries: 5
       start_period: 30s
+    volumes:
+      # Generated images (served by the API) and the cached embedding model
+      - server_storage:/app/storage
+      - transformers_cache:/app/.cache
 
   client:
     build:
@@ -59,3 +63,5 @@ services:
 volumes:
   postgres_data:
   redis_data:
+  server_storage:
+  transformers_cache:

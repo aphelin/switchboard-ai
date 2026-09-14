@@ -42,3 +42,8 @@ docker-compose.override.yml
 
 # TypeScript
 *.tsbuildinfo
+
+# Local ML model cache and generated files
+**/.cache/
+server/storage/
+server/evals/results/
