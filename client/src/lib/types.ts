@@ -46,6 +46,11 @@ export interface CreateGenerationPayload {
   enhance?: boolean;
   priority?: JobPriority;
   parameters?: ImageParameters | TextParameters;
+  /**
+   * Catalog model id (`<provider>:<modelId>`) for TEXT generations and for
+   * prompt enhancement on images. Not used for the image model itself.
+   */
+  llmModel?: string;
 }
 
 export interface ImageParameters {
@@ -209,8 +214,12 @@ export interface LlmCall {
   status: 'ok' | 'error';
   error: string | null;
   metadata: Record<string, unknown> | null;
+  /** Whose API key paid for the call: the app's platform key or the user's own. */
+  keySource: KeySource;
   createdAt: string;
 }
+
+export type KeySource = 'platform' | 'user';
 
 export interface TraceSummary {
   totals: {
@@ -248,5 +257,57 @@ export interface MeResponse {
     spentTodayUsd: number;
     /** null means no daily limit is configured. */
     dailyBudgetUsd: number | null;
+    /** Estimated spend today on the user's own provider keys (not budgeted). */
+    ownKeysSpentTodayUsd: number;
   };
+}
+
+// ---------------------------------------------------------------------------
+// AI providers and models (bring your own key)
+// ---------------------------------------------------------------------------
+
+export type ProviderId = 'platform' | 'openai' | 'anthropic' | 'google';
+
+export type ModelTier = 'flagship' | 'balanced' | 'fast';
+
+export interface CatalogModel {
+  /** `<provider>:<modelId>`, e.g. `anthropic:claude-sonnet-5`. Send this back. */
+  id: string;
+  provider: ProviderId;
+  modelId: string;
+  label: string;
+  description: string;
+  tier: ModelTier;
+  capabilities: { tools: boolean; structuredOutput: boolean };
+  /** USD per 1M tokens. */
+  pricing: { input: number; output: number; cachedInput?: number } | null;
+}
+
+export interface ProviderStatus {
+  id: ProviderId;
+  label: string;
+  /** false only for the included platform provider. */
+  requiresKey: boolean;
+  /** platform: always true; others: the user has a stored key. */
+  connected: boolean;
+  /** Last 4 characters of the stored key. */
+  keyHint: string | null;
+  keyUrl: string | null;
+  keyPlaceholder: string | null;
+  updatedAt: string | null;
+  models: CatalogModel[];
+}
+
+export interface ProvidersResponse {
+  /** false when the server has no encryption key configured. */
+  byokEnabled: boolean;
+  defaultModel: string;
+  providers: ProviderStatus[];
+}
+
+export interface SaveProviderKeyResponse {
+  provider: ProviderId;
+  keyHint: string;
+  updatedAt: string;
+  warning: string | null;
 }

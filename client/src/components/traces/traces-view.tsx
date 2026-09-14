@@ -333,6 +333,16 @@ export function TracesView() {
                       <TableCell>
                         <span className="font-mono text-xs">{call.model}</span>
                         <span className="ml-1 text-xs text-muted-foreground">{call.provider}</span>
+                        {call.keySource === "user" && (
+                          <Badge
+                            variant="secondary"
+                            className="ml-1.5 h-4 px-1.5 text-[10px]"
+                            title="Billed to your own provider key; not counted in the daily budget"
+                            data-testid="trace-key-source"
+                          >
+                            your key
+                          </Badge>
+                        )}
                       </TableCell>
                       <TableCell className="whitespace-nowrap text-right font-mono text-xs">
                         {formatTokens(call.inputTokens)} / {formatTokens(call.outputTokens)}

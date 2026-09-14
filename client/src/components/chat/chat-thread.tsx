@@ -7,19 +7,28 @@ import {
   lastAssistantMessageIsCompleteWithApprovalResponses,
   type UIMessage,
 } from "ai";
-import { Send, Square, MessageSquare, RotateCcw } from "lucide-react";
+import { Send, Square, MessageSquare, RotateCcw, KeyRound } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { MessageList } from "./message-bubble";
 import { getChatUrl } from "@/lib/api";
-import { fromChatError, isBudgetError, toastApiError } from "@/lib/api-errors";
+import {
+  fromChatError,
+  isBudgetError,
+  isProviderKeyRequiredError,
+  providerForKeyError,
+  toastApiError,
+} from "@/lib/api-errors";
 import { notifyUnauthorized } from "@/lib/auth-events";
+import { requestProviderDialog } from "@/lib/model-events";
 
 interface ChatThreadProps {
   conversationId: string;
   initialMessages: UIMessage[];
   /** Documents the assistant may search (empty = all). */
   documentIds: string[];
+  /** Catalog model id; null lets the server use its default. */
+  model?: string | null;
   onResponseFinished?: () => void;
 }
 
@@ -34,6 +43,7 @@ export function ChatThread({
   conversationId,
   initialMessages,
   documentIds,
+  model,
   onResponseFinished,
 }: ChatThreadProps) {
   const transport = useMemo(
@@ -41,8 +51,9 @@ export function ChatThread({
     () => new DefaultChatTransport({ api: getChatUrl(), credentials: "include" }),
     [],
   );
-  // The document scope can change mid-conversation, so it is sent per request.
-  const requestOptions = { body: { documentIds } };
+  // Scope and model can change mid-conversation, so they are sent per request:
+  // a new model applies from the next message on.
+  const requestOptions = { body: { documentIds, model: model ?? undefined } };
 
   const {
     messages,
@@ -66,7 +77,7 @@ export function ChatThread({
         notifyUnauthorized();
         return;
       }
-      toastApiError(apiError, "The assistant failed to respond");
+      toastApiError(apiError, "The assistant failed to respond", { model });
     },
   });
 
@@ -75,6 +86,7 @@ export function ChatThread({
   const busy = status === "submitted" || status === "streaming";
   const displayError = error ? fromChatError(error) : null;
   const budgetReached = displayError ? isBudgetError(displayError) : false;
+  const keyRequired = displayError ? isProviderKeyRequiredError(displayError) : false;
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
@@ -133,6 +145,18 @@ export function ChatThread({
             {displayError.message}
           </span>
           <div className="flex shrink-0 gap-1">
+            {keyRequired && (
+              <Button
+                variant="ghost"
+                size="xs"
+                className="gap-1"
+                onClick={() => requestProviderDialog(providerForKeyError(displayError, model))}
+                data-testid="chat-add-key"
+              >
+                <KeyRound className="h-3 w-3" />
+                Add key
+              </Button>
+            )}
             {!budgetReached && (
               <Button variant="ghost" size="xs" className="gap-1" onClick={() => regenerate(requestOptions)}>
                 <RotateCcw className="h-3 w-3" />

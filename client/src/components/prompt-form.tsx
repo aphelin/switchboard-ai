@@ -23,6 +23,8 @@ import { createGeneration } from "@/lib/api";
 import { toastApiError } from "@/lib/api-errors";
 import { GenerationType, JobPriority } from "@/lib/constants";
 import type { CreateGenerationPayload } from "@/lib/types";
+import { ModelPicker } from "@/components/models/model-picker";
+import { useModels } from "@/hooks/use-models";
 import { toast } from "sonner";
 
 interface PromptFormProps {
@@ -40,6 +42,11 @@ export function PromptForm({ onCreated }: PromptFormProps) {
   const [height, setHeight] = useState("1024");
   const [model, setModel] = useState("flux");
   const [seed, setSeed] = useState("");
+  const { selectedModel, setSelectedModel } = useModels();
+
+  // The LLM is used for text generations and for prompt enhancement only.
+  const usesLlm = type === GenerationType.TEXT || enhance;
+  const llmModel = usesLlm ? (selectedModel ?? undefined) : undefined;
 
   const handleSubmit = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
@@ -52,6 +59,7 @@ export function PromptForm({ onCreated }: PromptFormProps) {
         type,
         enhance,
         priority,
+        ...(llmModel && { llmModel }),
       };
 
       if (type === GenerationType.IMAGE && showParams) {
@@ -71,7 +79,7 @@ export function PromptForm({ onCreated }: PromptFormProps) {
       setPrompt("");
       onCreated?.();
     } catch (err) {
-      toastApiError(err, "Failed to create generation");
+      toastApiError(err, "Failed to create generation", { model: llmModel });
     } finally {
       setLoading(false);
     }
@@ -110,23 +118,38 @@ export function PromptForm({ onCreated }: PromptFormProps) {
             </Button>
           </div>
 
-          <div>
-            <label htmlFor="priority-select" className="mb-1 block text-xs text-muted-foreground">
-              Priority
-            </label>
-            <Select
-              value={priority}
-              onValueChange={(v) => setPriority(v as JobPriority)}
-            >
-              <SelectTrigger className="w-[140px]">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value={JobPriority.HIGH}>High</SelectItem>
-                <SelectItem value={JobPriority.NORMAL}>Normal</SelectItem>
-                <SelectItem value={JobPriority.LOW}>Low</SelectItem>
-              </SelectContent>
-            </Select>
+          <div className="flex flex-wrap gap-4">
+            <div>
+              <label htmlFor="priority-select" className="mb-1 block text-xs text-muted-foreground">
+                Priority
+              </label>
+              <Select
+                value={priority}
+                onValueChange={(v) => setPriority(v as JobPriority)}
+              >
+                <SelectTrigger className="w-[140px]">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value={JobPriority.HIGH}>High</SelectItem>
+                  <SelectItem value={JobPriority.NORMAL}>Normal</SelectItem>
+                  <SelectItem value={JobPriority.LOW}>Low</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+
+            {type === GenerationType.TEXT && (
+              <div className="min-w-0">
+                <label htmlFor="llm-model-select" className="mb-1 block text-xs text-muted-foreground">
+                  Text model
+                </label>
+                <ModelPicker
+                  id="llm-model-select"
+                  value={selectedModel}
+                  onChange={setSelectedModel}
+                />
+              </div>
+            )}
           </div>
 
           <Textarea
@@ -143,7 +166,7 @@ export function PromptForm({ onCreated }: PromptFormProps) {
 
           {type === GenerationType.IMAGE && (
             <div className="space-y-3">
-              <div className="flex items-center gap-2">
+              <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
                 <label className="flex items-center gap-2 text-sm">
                   <input
                     type="checkbox"
@@ -153,6 +176,19 @@ export function PromptForm({ onCreated }: PromptFormProps) {
                   />
                   Enhance prompt with AI
                 </label>
+                {enhance && (
+                  <div className="flex min-w-0 items-center gap-2">
+                    <label htmlFor="llm-model-select" className="text-xs text-muted-foreground">
+                      Enhancement model
+                    </label>
+                    <ModelPicker
+                      id="llm-model-select"
+                      value={selectedModel}
+                      onChange={setSelectedModel}
+                      size="sm"
+                    />
+                  </div>
+                )}
               </div>
 
               <Button

@@ -9,6 +9,8 @@ import { Button } from "@/components/ui/button";
 import { ConversationList } from "./conversation-list";
 import { ChatThread } from "./chat-thread";
 import { DocumentScopeSelector } from "./document-scope-selector";
+import { ModelPicker } from "@/components/models/model-picker";
+import { useModels } from "@/hooks/use-models";
 import {
   deleteConversation,
   getConversation,
@@ -37,6 +39,9 @@ export function ChatView() {
   const [active, setActive] = useState<ActiveConversation | null>(null);
   const [opening, setOpening] = useState(false);
   const refreshTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const { selectedModel, setSelectedModel, resolveModel } = useModels();
+  // The agent calls tools, so fall back to a tool-capable model if needed.
+  const chatModel = resolveModel(selectedModel, { requireTools: true });
 
   const refreshConversations = useCallback(async () => {
     try {
@@ -138,7 +143,13 @@ export function ChatView() {
               <p className="truncate font-mono text-[11px] text-muted-foreground">{active.id}</p>
             )}
           </div>
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center gap-2">
+            <ModelPicker
+              value={chatModel}
+              onChange={setSelectedModel}
+              requireTools
+              size="sm"
+            />
             <DocumentScopeSelector
               documents={documents}
               selected={selectedDocumentIds}
@@ -166,6 +177,7 @@ export function ChatView() {
               conversationId={active.id}
               initialMessages={active.initialMessages}
               documentIds={selectedDocumentIds}
+              model={chatModel}
               onResponseFinished={handleResponseFinished}
             />
           )}

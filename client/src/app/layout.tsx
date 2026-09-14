@@ -4,6 +4,7 @@ import { Toaster } from '@/components/ui/sonner';
 import { Navbar } from '@/components/layout/navbar';
 import { ThemeProvider } from '@/components/layout/theme-provider';
 import { SseProvider } from '@/hooks/use-sse';
+import { ModelsProvider } from '@/hooks/use-models';
 import { AuthGate } from '@/components/auth/auth-gate';
 import './globals.css';
 
@@ -64,10 +65,12 @@ export default function RootLayout({
           {/* Nothing inside the gate mounts (no API calls, no SSE) until a session exists. */}
           <AuthGate>
             <SseProvider>
-              <Navbar />
-              <main className="mx-auto min-h-[calc(100vh-3.5rem)] max-w-6xl px-4 py-6">
-                {children}
-              </main>
+              <ModelsProvider>
+                <Navbar />
+                <main className="mx-auto min-h-[calc(100vh-3.5rem)] max-w-6xl px-4 py-6">
+                  {children}
+                </main>
+              </ModelsProvider>
             </SseProvider>
           </AuthGate>
           <Toaster />

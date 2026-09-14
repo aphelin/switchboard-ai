@@ -13,6 +13,9 @@ import type {
   LlmCall,
   TraceSummary,
   MeResponse,
+  ProviderId,
+  ProvidersResponse,
+  SaveProviderKeyResponse,
 } from './types';
 import type { DocumentStatus } from './constants';
 import { ApiError, messageFromBody, type ApiErrorBody } from './api-errors';
@@ -47,6 +50,31 @@ apiClient.interceptors.response.use(
 export async function getMe(): Promise<MeResponse> {
   const { data } = await apiClient.get<MeResponse>('/me');
   return data;
+}
+
+// ---------------------------------------------------------------------------
+// AI providers (bring your own key)
+// ---------------------------------------------------------------------------
+
+export async function getProviders(): Promise<ProvidersResponse> {
+  const { data } = await apiClient.get<ProvidersResponse>('/providers');
+  return data;
+}
+
+/** Verifies the key with the provider, then stores it encrypted. Can take a few seconds. */
+export async function saveProviderKey(
+  provider: ProviderId,
+  apiKey: string,
+): Promise<SaveProviderKeyResponse> {
+  const { data } = await apiClient.put<SaveProviderKeyResponse>(
+    `/providers/${provider}/key`,
+    { apiKey },
+  );
+  return data;
+}
+
+export async function deleteProviderKey(provider: ProviderId): Promise<void> {
+  await apiClient.delete(`/providers/${provider}/key`);
 }
 
 // ---------------------------------------------------------------------------

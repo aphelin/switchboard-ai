@@ -1,9 +1,10 @@
 "use client";
 
 import { useState } from "react";
-import { KeyRound, LogOut, Loader2 } from "lucide-react";
+import { Bot, KeyRound, LogOut, Loader2 } from "lucide-react";
 import { authClient } from "@/lib/auth-client";
 import { getMe } from "@/lib/api";
+import { useModels } from "@/hooks/use-models";
 import type { MeResponse } from "@/lib/types";
 import { Button } from "@/components/ui/button";
 import {
@@ -33,6 +34,7 @@ export function UserMenu() {
   const [me, setMe] = useState<MeResponse | null>(null);
   const [apiKeysOpen, setApiKeysOpen] = useState(false);
   const [signingOut, setSigningOut] = useState(false);
+  const { openProviderDialog } = useModels();
 
   if (!session) return null;
   const { user } = session;
@@ -99,6 +101,14 @@ export function UserMenu() {
                 ) : (
                   " (no limit)"
                 )}
+                {usage.ownKeysSpentTodayUsd > 0 && (
+                  <span className="mt-0.5 block" data-testid="user-usage-own-keys">
+                    Own keys today:{" "}
+                    <span className="font-mono text-foreground">
+                      {formatUsd(usage.ownKeysSpentTodayUsd)}
+                    </span>
+                  </span>
+                )}
               </>
             ) : (
               <span className="inline-flex items-center gap-1">
@@ -107,6 +117,13 @@ export function UserMenu() {
             )}
           </div>
           <DropdownMenuSeparator />
+          <DropdownMenuItem
+            onClick={() => openProviderDialog()}
+            data-testid="user-menu-ai-providers"
+          >
+            <Bot />
+            AI providers
+          </DropdownMenuItem>
           <DropdownMenuItem onClick={() => setApiKeysOpen(true)} data-testid="user-menu-api-keys">
             <KeyRound />
             API keys
