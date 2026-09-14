@@ -56,6 +56,18 @@ export interface EmbeddingConfig {
   dimensions: number;
 }
 
+export interface AuthConfig {
+  secret: string;
+  /** Origin Better Auth runs on (this API). */
+  baseUrl: string;
+  /** Browser origins allowed to call auth endpoints with cookies (CSRF protection). */
+  trustedOrigins: string[];
+  /** Per-user daily AI spend limit in USD; null = unlimited. */
+  dailyBudgetUsd: number | null;
+  /** First account created claims rows that have no owner (rows from before auth). */
+  claimLegacyData: boolean;
+}
+
 export interface AppConfiguration {
   app: AppConfig;
   database: DatabaseConfig;
@@ -64,4 +76,5 @@ export interface AppConfiguration {
   storage: StorageConfig;
   llm: LlmConfig;
   embedding: EmbeddingConfig;
+  auth: AuthConfig;
 }

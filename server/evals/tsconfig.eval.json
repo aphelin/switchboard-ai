@@ -5,6 +5,16 @@
     "outDir": "../dist/eval",
     "incremental": false
   },
-  "include": ["../src/**/*", "../evals/**/*", "../generated/**/*"],
-  "exclude": ["../node_modules", "../dist", "../**/*.spec.ts", "../evals/mcp-smoke.ts"]
+  "include": [
+    "../src/**/*",
+    "../evals/**/*",
+    "../generated/**/*"
+  ],
+  "exclude": [
+    "../node_modules",
+    "../dist",
+    "../**/*.spec.ts",
+    "../evals/mcp-smoke.ts",
+    "../evals/auth-isolation.ts"
+  ]
 }

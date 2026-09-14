@@ -45,4 +45,12 @@ export const validationSchema = Joi.object({
   EMBEDDING_BASE_URL: Joi.string().uri().optional(),
   EMBEDDING_API_KEY: Joi.string().allow('').optional(),
   TRANSFORMERS_CACHE_DIR: Joi.string().default('./.cache/transformers'),
+
+  // Auth (Better Auth): the secret signs session cookies; generate with `openssl rand -base64 32`
+  BETTER_AUTH_SECRET: Joi.string().min(32).required(),
+  BETTER_AUTH_URL: Joi.string().uri().optional(),
+  // Per-user daily AI spending limit in USD (0 disables the limit)
+  USER_DAILY_BUDGET_USD: Joi.number().min(0).default(0.5),
+  // Dev convenience: the first account created takes ownership of rows created before auth existed
+  AUTH_CLAIM_LEGACY_DATA: Joi.boolean().default(false),
 });

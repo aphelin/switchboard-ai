@@ -5,6 +5,8 @@ import { Prisma } from 'generated/prisma/client';
 export interface RecordLlmCallInput {
   name: string;
   traceId?: string;
+  /** Who the call was made for; drives per-user cost views and the daily budget. */
+  userId?: string;
   provider: string;
   model: string;
   inputTokens?: number;
@@ -18,6 +20,7 @@ export interface RecordLlmCallInput {
 }
 
 export interface TraceListParams {
+  userId: string;
   traceId?: string;
   name?: string;
   page: number;
@@ -54,8 +57,8 @@ export class TraceService {
   }
 
   async list(params: TraceListParams) {
-    const { traceId, name, page, limit } = params;
-    const where: Prisma.LlmCallWhereInput = {};
+    const { userId, traceId, name, page, limit } = params;
+    const where: Prisma.LlmCallWhereInput = { userId };
     if (traceId) where.traceId = traceId;
     if (name) where.name = name;
 
@@ -72,16 +75,19 @@ export class TraceService {
     return { data, total, page, limit, totalPages: Math.ceil(total / limit) };
   }
 
-  async summary() {
+  async summary(userId: string) {
+    const where: Prisma.LlmCallWhereInput = { userId };
     const [totals, errors, byModel, byName] = await Promise.all([
       this.prisma.llmCall.aggregate({
+        where,
         _count: { _all: true },
         _sum: { inputTokens: true, outputTokens: true, costUsd: true },
         _avg: { latencyMs: true },
       }),
-      this.prisma.llmCall.count({ where: { status: 'error' } }),
+      this.prisma.llmCall.count({ where: { ...where, status: 'error' } }),
       this.prisma.llmCall.groupBy({
         by: ['provider', 'model'],
+        where,
         _count: { _all: true },
         _sum: { inputTokens: true, outputTokens: true, costUsd: true },
         _avg: { latencyMs: true },
@@ -89,6 +95,7 @@ export class TraceService {
       }),
       this.prisma.llmCall.groupBy({
         by: ['name'],
+        where,
         _count: { _all: true },
         _sum: { costUsd: true },
         _avg: { latencyMs: true },

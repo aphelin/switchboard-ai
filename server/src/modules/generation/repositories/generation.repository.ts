@@ -13,6 +13,7 @@ export class GenerationRepository {
   constructor(private readonly prisma: PrismaService) {}
 
   async create(data: {
+    userId: string;
     prompt: string;
     type: GenerationType;
     priority?: JobPriority;
@@ -27,8 +28,16 @@ export class GenerationRepository {
     });
   }
 
+  /** Unscoped lookup for internal use (queue workers). Request handlers use findByIdForUser. */
   async findById(id: string): Promise<Generation | null> {
     return this.prisma.generation.findUnique({ where: { id } });
+  }
+
+  async findByIdForUser(
+    id: string,
+    userId: string,
+  ): Promise<Generation | null> {
+    return this.prisma.generation.findFirst({ where: { id, userId } });
   }
 
   async findByJobId(jobId: string): Promise<Generation | null> {
@@ -36,14 +45,15 @@ export class GenerationRepository {
   }
 
   async findMany(params: {
+    userId: string;
     type?: GenerationType;
     status?: JobStatus;
     page: number;
     limit: number;
   }): Promise<PaginatedResult<Generation>> {
-    const { type, status, page, limit } = params;
+    const { userId, type, status, page, limit } = params;
 
-    const where: Prisma.GenerationWhereInput = {};
+    const where: Prisma.GenerationWhereInput = { userId };
     if (type) where.type = type;
     if (status) where.status = status;
 

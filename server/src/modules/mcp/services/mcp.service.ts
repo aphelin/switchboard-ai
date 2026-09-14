@@ -70,7 +70,8 @@ const documentIdsSchema = z
 /**
  * Exposes the toolkit to MCP clients (Claude Code, Claude Desktop, MCP Inspector).
  * Every tool is a thin, typed wrapper over an existing service, so an agent can
- * only do what the HTTP API already allows, with the same validation and limits.
+ * only do what the HTTP API already allows, with the same validation, limits
+ * and per-user scoping. The user is the owner of the API key used to connect.
  */
 @Injectable()
 export class McpService {
@@ -83,22 +84,22 @@ export class McpService {
     private readonly chat: ChatService,
   ) {}
 
-  /** Builds a fresh server; stateless transports use one per request. */
-  createServer(): McpServer {
+  /** Builds a fresh server bound to one user; stateless transports use one per request. */
+  createServer(userId: string): McpServer {
     const server = new McpServer(MCP_SERVER_INFO, {
       instructions:
         'Mini AI Toolkit: generate images/text through an async job pipeline and search or ask questions over uploaded documents (RAG). ' +
         'Use ask_documents for questions that documents may answer; use search_documents for raw passages.',
     });
 
-    this.registerGenerationTools(server);
-    this.registerDocumentTools(server);
-    this.registerDocumentResource(server);
+    this.registerGenerationTools(server, userId);
+    this.registerDocumentTools(server, userId);
+    this.registerDocumentResource(server, userId);
 
     return server;
   }
 
-  private registerGenerationTools(server: McpServer): void {
+  private registerGenerationTools(server: McpServer, userId: string): void {
     server.registerTool(
       'generate_image',
       {
@@ -150,7 +151,7 @@ export class McpService {
       },
       async ({ prompt, model, width, height, seed, enhance }) => {
         try {
-          const created = await this.generations.create({
+          const created = await this.generations.create(userId, {
             prompt,
             type: GenerationType.IMAGE,
             enhance: enhance ?? false,
@@ -158,6 +159,7 @@ export class McpService {
             parameters: { model, width, height, seed },
           });
           const final = await this.generations.waitForTerminalStatus(
+            userId,
             created.id,
             GENERATION_WAIT_MS,
           );
@@ -208,13 +210,14 @@ export class McpService {
       },
       async ({ prompt, systemPrompt, temperature }) => {
         try {
-          const created = await this.generations.create({
+          const created = await this.generations.create(userId, {
             prompt,
             type: GenerationType.TEXT,
             priority: JobPriority.HIGH,
             parameters: { systemPrompt, temperature },
           });
           const final = await this.generations.waitForTerminalStatus(
+            userId,
             created.id,
             GENERATION_WAIT_MS,
           );
@@ -266,7 +269,7 @@ export class McpService {
       },
       async ({ status, type, limit }) => {
         try {
-          const page = await this.generations.findAll({
+          const page = await this.generations.findAll(userId, {
             status,
             type,
             page: 1,
@@ -312,7 +315,7 @@ export class McpService {
       },
       async ({ id }) => {
         try {
-          const gen = await this.generations.findOne(id);
+          const gen = await this.generations.findOne(userId, id);
           const structured = {
             id: gen.id,
             type: gen.type,
@@ -338,7 +341,7 @@ export class McpService {
     );
   }
 
-  private registerDocumentTools(server: McpServer): void {
+  private registerDocumentTools(server: McpServer, userId: string): void {
     server.registerTool(
       'search_documents',
       {
@@ -374,6 +377,7 @@ export class McpService {
       async ({ query, topK, documentIds, mode }) => {
         try {
           const results = await this.retrieval.search({
+            userId,
             query,
             topK,
             documentIds,
@@ -431,6 +435,7 @@ export class McpService {
       async ({ question, documentIds }) => {
         try {
           const answer = await this.chat.answer({
+            userId,
             question,
             documentIds,
             traceId: `mcp:${randomUUID()}`,
@@ -477,7 +482,7 @@ export class McpService {
       },
       async () => {
         try {
-          const page = await this.documents.findAll({
+          const page = await this.documents.findAll(userId, {
             page: 1,
             limit: DOCUMENT_LIST_LIMIT,
           });
@@ -528,6 +533,7 @@ export class McpService {
       async ({ title, content }) => {
         try {
           const doc = await this.documents.create(
+            userId,
             { title, content },
             { source: 'mcp' },
           );
@@ -556,7 +562,7 @@ export class McpService {
       },
       async ({ id }) => {
         try {
-          await this.documents.remove(id);
+          await this.documents.remove(userId, id);
           return ok(`Document ${id} deleted.`, { id, deleted: true });
         } catch (error) {
           return fail(error);
@@ -565,11 +571,11 @@ export class McpService {
     );
   }
 
-  /** `document://{id}` resources expose the full text of indexed documents. */
-  private registerDocumentResource(server: McpServer): void {
+  /** `document://{id}` resources expose the full text of the user's indexed documents. */
+  private registerDocumentResource(server: McpServer, userId: string): void {
     const template = new ResourceTemplate('document://{id}', {
       list: async () => {
-        const documents = await this.documents.findReady();
+        const documents = await this.documents.findReady(userId);
         return {
           resources: documents.map((doc) => ({
             uri: `document://${doc.id}`,
@@ -591,7 +597,7 @@ export class McpService {
       },
       async (uri, variables) => {
         const id = String(variables.id);
-        const doc = await this.documents.findOne(id);
+        const doc = await this.documents.findOne(userId, id);
         return {
           contents: [
             { uri: uri.href, mimeType: 'text/plain', text: doc.content },

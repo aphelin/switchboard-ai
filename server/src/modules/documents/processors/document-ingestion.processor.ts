@@ -9,10 +9,15 @@ import { DOCUMENT_INGESTION_QUEUE } from '../../../shared/constants/app.constant
 import { DocumentStatus } from 'generated/prisma/enums';
 import type { DocumentIngestionJobData } from '../types/documents.types';
 
+interface DocumentRef {
+  id: string;
+  userId: string | null;
+}
+
 /**
  * Ingestion pipeline: document -> chunks -> embeddings -> pgvector.
  * Runs as a queue job so uploads return immediately and embedding load never
- * blocks the API; progress is pushed to the UI over SSE.
+ * blocks the API; progress is pushed to the owner's UI over SSE.
  */
 @Processor(DOCUMENT_INGESTION_QUEUE, { concurrency: 1 })
 export class DocumentIngestionProcessor extends WorkerHost {
@@ -36,7 +41,7 @@ export class DocumentIngestionProcessor extends WorkerHost {
     }
 
     this.logger.log(`Ingesting document ${documentId} ("${document.title}")`);
-    await this.setStatus(documentId, DocumentStatus.PROCESSING);
+    await this.setStatus(document, DocumentStatus.PROCESSING);
 
     try {
       const chunks = await this.chunking.chunk(document.content);
@@ -48,7 +53,7 @@ export class DocumentIngestionProcessor extends WorkerHost {
       // what document it belongs to, which helps short or generic passages.
       const embeddings = await this.embedding.embedDocuments(
         chunks.map((chunk) => `${document.title}\n\n${chunk.content}`),
-        documentId,
+        { traceId: documentId, userId: document.userId ?? undefined },
       );
 
       await this.repository.replaceChunks(
@@ -56,7 +61,7 @@ export class DocumentIngestionProcessor extends WorkerHost {
         chunks.map((chunk, i) => ({ ...chunk, embedding: embeddings[i] })),
       );
 
-      await this.setStatus(documentId, DocumentStatus.READY, {
+      await this.setStatus(document, DocumentStatus.READY, {
         chunkCount: chunks.length,
         error: null,
       });
@@ -66,7 +71,7 @@ export class DocumentIngestionProcessor extends WorkerHost {
       this.logger.error(
         `Ingestion failed for document ${documentId}: ${message}`,
       );
-      await this.setStatus(documentId, DocumentStatus.FAILED, {
+      await this.setStatus(document, DocumentStatus.FAILED, {
         error: message,
       });
       throw error;
@@ -74,17 +79,20 @@ export class DocumentIngestionProcessor extends WorkerHost {
   }
 
   private async setStatus(
-    documentId: string,
+    document: DocumentRef,
     status: DocumentStatus,
     extra?: { chunkCount?: number; error?: string | null },
   ): Promise<void> {
     const updated = await this.repository.updateStatus(
-      documentId,
+      document.id,
       status,
       extra,
     );
+    // Rows from before auth have no owner yet, so there is nobody to notify.
+    if (!document.userId) return;
     this.sseService.emitDocumentUpdate({
-      documentId,
+      documentId: document.id,
+      userId: document.userId,
       status,
       chunkCount: updated.chunkCount,
       error: updated.error ?? undefined,

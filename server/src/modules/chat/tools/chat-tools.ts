@@ -12,7 +12,9 @@ export interface ChatToolsDeps {
   retrieval: RetrievalService;
   documents: DocumentsService;
   generations: GenerationService;
-  /** Restrict searches to these documents (undefined = all). */
+  /** Owner of the conversation, taken from the session. Never a tool input the model can set. */
+  userId: string;
+  /** Restrict searches to these documents (undefined = all of the user's documents). */
   documentIds?: string[];
   traceId?: string;
 }
@@ -35,9 +37,11 @@ export const CHAT_TOOL_APPROVAL: Record<string, ToolApprovalStatus> = {
 /**
  * The agent's tools. Each one is a thin, typed wrapper over an existing
  * service, so the model can only do what the API already allows, with the
- * same validation and limits.
+ * same validation, limits and per-user scoping.
  */
 export function buildChatTools(deps: ChatToolsDeps) {
+  const { userId } = deps;
+
   const search_documents = tool({
     description:
       "Search the user's uploaded documents (semantic + keyword search). Returns the most relevant passages with a ref number to cite. Use it for any question that might be answered by the documents.",
@@ -57,6 +61,7 @@ export function buildChatTools(deps: ChatToolsDeps) {
     }),
     execute: async ({ query, topK }): Promise<SearchToolOutput> => {
       const results = await deps.retrieval.search({
+        userId,
         query,
         topK,
         documentIds: deps.documentIds,
@@ -84,7 +89,7 @@ export function buildChatTools(deps: ChatToolsDeps) {
     description: 'List the documents that are indexed and available to search.',
     inputSchema: z.object({}),
     execute: async () => {
-      const documents = await deps.documents.findReady();
+      const documents = await deps.documents.findReady(userId);
       return {
         documents: documents.map((doc) => ({
           id: doc.id,
@@ -104,7 +109,7 @@ export function buildChatTools(deps: ChatToolsDeps) {
       limit: z.number().int().min(1).max(20).optional(),
     }),
     execute: async ({ status, type, limit }) => {
-      const page = await deps.generations.findAll({
+      const page = await deps.generations.findAll(userId, {
         status,
         type,
         page: 1,
@@ -130,7 +135,7 @@ export function buildChatTools(deps: ChatToolsDeps) {
     description: 'Get one generation by id, including its result.',
     inputSchema: z.object({ id: z.uuid() }),
     execute: async ({ id }) => {
-      const gen = await deps.generations.findOne(id);
+      const gen = await deps.generations.findOne(userId, id);
       return {
         id: gen.id,
         type: gen.type,
@@ -164,7 +169,7 @@ export function buildChatTools(deps: ChatToolsDeps) {
         .describe('Seed for reproducible output'),
     }),
     execute: async ({ prompt, model, width, height, seed }) => {
-      const created = await deps.generations.create({
+      const created = await deps.generations.create(userId, {
         prompt,
         type: GenerationType.IMAGE,
         enhance: false,
@@ -172,6 +177,7 @@ export function buildChatTools(deps: ChatToolsDeps) {
         parameters: { model, width, height, seed },
       });
       const final = await deps.generations.waitForTerminalStatus(
+        userId,
         created.id,
         CHAT.TOOL_WAIT_TIMEOUT_MS,
       );

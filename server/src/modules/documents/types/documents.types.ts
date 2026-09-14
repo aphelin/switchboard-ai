@@ -53,6 +53,8 @@ export interface RetrievedChunk {
 }
 
 export interface SearchParams {
+  /** Only this user's documents are searched; the filter is part of the SQL query. */
+  userId: string;
   query: string;
   topK?: number;
   documentIds?: string[];

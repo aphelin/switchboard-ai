@@ -6,10 +6,15 @@ export type ModelSelector = ModelTier | (string & {});
 
 export type ProviderSlot = 'primary' | 'fallback';
 
-/** Every LLM call is named and optionally attached to a trace (conversation, generation, eval run). */
-export interface LlmCallContext {
-  name: string;
+/** Attribution for a traced call: which request it belongs to and who pays for it. */
+export interface TraceContext {
   traceId?: string;
+  userId?: string;
+}
+
+/** Every LLM call is named and optionally attached to a trace (conversation, generation, eval run). */
+export interface LlmCallContext extends TraceContext {
+  name: string;
   metadata?: Record<string, unknown>;
 }
 

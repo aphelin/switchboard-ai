@@ -39,6 +39,7 @@ export class DocumentsService {
   ) {}
 
   async create(
+    userId: string,
     dto: CreateDocumentDto,
     metadata?: Record<string, unknown>,
   ): Promise<DocumentSummary> {
@@ -46,6 +47,7 @@ export class DocumentsService {
     if (!content) throw new BadRequestException('Document content is empty');
 
     const document = await this.repository.create({
+      userId,
       title: dto.title.trim(),
       content,
       mimeType: 'text/plain',
@@ -56,6 +58,7 @@ export class DocumentsService {
   }
 
   async upload(
+    userId: string,
     file: UploadedFileLike,
     title?: string,
   ): Promise<DocumentSummary> {
@@ -76,6 +79,7 @@ export class DocumentsService {
     }
 
     const document = await this.repository.create({
+      userId,
       title: (title?.trim() || file.originalname).slice(0, 200),
       content: parsed.text,
       source: file.originalname,
@@ -85,31 +89,36 @@ export class DocumentsService {
     return document;
   }
 
-  findAll(query: QueryDocumentsDto): Promise<PaginatedResult<DocumentSummary>> {
+  findAll(
+    userId: string,
+    query: QueryDocumentsDto,
+  ): Promise<PaginatedResult<DocumentSummary>> {
     return this.repository.findMany({
+      userId,
       status: query.status,
       page: query.page ?? 1,
       limit: query.limit ?? 20,
     });
   }
 
-  findReady(): Promise<DocumentSummary[]> {
-    return this.repository.findReady();
+  findReady(userId: string): Promise<DocumentSummary[]> {
+    return this.repository.findReady(userId);
   }
 
-  async findOne(id: string) {
-    const document = await this.repository.findById(id);
+  /** Another user's document is reported as not found, so ids can't be probed. */
+  async findOne(userId: string, id: string) {
+    const document = await this.repository.findByIdForUser(id, userId);
     if (!document) throw new NotFoundException(`Document ${id} not found`);
     return document;
   }
 
-  async getChunks(id: string) {
-    await this.findOne(id);
+  async getChunks(userId: string, id: string) {
+    await this.findOne(userId, id);
     return this.repository.findChunks(id);
   }
 
-  async reindex(id: string): Promise<DocumentSummary> {
-    await this.findOne(id);
+  async reindex(userId: string, id: string): Promise<DocumentSummary> {
+    await this.findOne(userId, id);
     const updated = await this.repository.updateStatus(
       id,
       DocumentStatus.PENDING,
@@ -121,8 +130,8 @@ export class DocumentsService {
     return updated;
   }
 
-  async remove(id: string): Promise<void> {
-    await this.findOne(id);
+  async remove(userId: string, id: string): Promise<void> {
+    await this.findOne(userId, id);
     await this.repository.delete(id);
     this.logger.log(`Document ${id} deleted`);
   }

@@ -1,4 +1,9 @@
-import { Injectable, Logger, NotFoundException } from '@nestjs/common';
+import {
+  ForbiddenException,
+  Injectable,
+  Logger,
+  NotFoundException,
+} from '@nestjs/common';
 import type { Response } from 'express';
 import {
   convertToModelMessages,
@@ -12,6 +17,7 @@ import { LlmService } from '../../llm/services/llm.service';
 import { RetrievalService } from '../../documents/services/retrieval.service';
 import { DocumentsService } from '../../documents/services/documents.service';
 import { GenerationService } from '../../generation/services/generation.service';
+import { BudgetService } from '../../auth/services/budget.service';
 import { ChatRepository } from '../repositories/chat.repository';
 import type { ChatRequestDto } from '../dto/chat-request.dto';
 import { QueryConversationsDto } from '../dto/query-conversations.dto';
@@ -47,17 +53,25 @@ export class ChatService {
     private readonly documents: DocumentsService,
     private readonly generations: GenerationService,
     private readonly repository: ChatRepository,
+    private readonly budget: BudgetService,
   ) {}
 
-  async stream(dto: ChatRequestDto, res: Response): Promise<void> {
-    const conversation = await this.ensureConversation(dto.id);
+  async stream(
+    userId: string,
+    dto: ChatRequestDto,
+    res: Response,
+  ): Promise<void> {
+    await this.budget.assertWithinBudget(userId);
+    const conversation = await this.ensureConversation(userId, dto.id);
     const uiMessages = await validateUIMessages({ messages: dto.messages });
     const documentIds = dto.documentIds?.length ? dto.documentIds : undefined;
 
+    // The user id comes from the session, never from the model: tools cannot be steered to another user's data.
     const tools = buildChatTools({
       retrieval: this.retrieval,
       documents: this.documents,
       generations: this.generations,
+      userId,
       documentIds,
       traceId: conversation.id,
     });
@@ -71,6 +85,7 @@ export class ChatService {
     const result = this.llm.streamText({
       name: 'chat.stream',
       traceId: conversation.id,
+      userId,
       metadata: { promptVersion: ASSISTANT_PROMPT_VERSION, documentIds },
       model: 'main',
       instructions: buildAssistantInstructions({
@@ -95,7 +110,7 @@ export class ChatService {
       onEnd: async ({ messages, isAborted }) => {
         await this.persistMessages(conversation.id, messages);
         if (!isAborted && !conversation.title) {
-          void this.generateTitle(conversation.id, messages);
+          void this.generateTitle(userId, conversation.id, messages);
         }
       },
     });
@@ -108,6 +123,8 @@ export class ChatService {
    * the chat (image generation excluded). Used by evals and the MCP server.
    */
   async answer(params: AnswerParams): Promise<AnswerResult> {
+    await this.budget.assertWithinBudget(params.userId);
+
     const documentIds = params.documentIds?.length
       ? params.documentIds
       : undefined;
@@ -115,6 +132,7 @@ export class ChatService {
       retrieval: this.retrieval,
       documents: this.documents,
       generations: this.generations,
+      userId: params.userId,
       documentIds,
       traceId: params.traceId,
     });
@@ -126,6 +144,7 @@ export class ChatService {
     const result = await this.llm.generateText({
       name: 'chat.answer',
       traceId: params.traceId,
+      userId: params.userId,
       metadata: { promptVersion: ASSISTANT_PROMPT_VERSION },
       model: 'main',
       instructions: buildAssistantInstructions({
@@ -150,33 +169,44 @@ export class ChatService {
     };
   }
 
-  listConversations(query: QueryConversationsDto) {
+  listConversations(userId: string, query: QueryConversationsDto) {
     return this.repository.listConversations({
+      userId,
       page: query.page ?? 1,
       limit: query.limit ?? 20,
     });
   }
 
-  async getConversation(id: string) {
-    const conversation = await this.repository.findConversation(id);
-    if (!conversation)
-      throw new NotFoundException(`Conversation ${id} not found`);
+  async getConversation(userId: string, id: string) {
+    const conversation = await this.findOwnedConversation(userId, id);
     const messages = await this.repository.getMessages(id);
     return { ...conversation, messages };
   }
 
-  async deleteConversation(id: string): Promise<void> {
-    const conversation = await this.repository.findConversation(id);
-    if (!conversation)
-      throw new NotFoundException(`Conversation ${id} not found`);
+  async deleteConversation(userId: string, id: string): Promise<void> {
+    await this.findOwnedConversation(userId, id);
     await this.repository.deleteConversation(id);
   }
 
-  private async ensureConversation(id: string) {
-    return (
-      (await this.repository.findConversation(id)) ??
-      (await this.repository.createConversation(id))
-    );
+  /** Reads never reveal whether another user's conversation exists. */
+  private async findOwnedConversation(userId: string, id: string) {
+    const conversation = await this.repository.findConversation(id);
+    if (!conversation || conversation.userId !== userId) {
+      throw new NotFoundException(`Conversation ${id} not found`);
+    }
+    return conversation;
+  }
+
+  private async ensureConversation(userId: string, id: string) {
+    const existing = await this.repository.findConversation(id);
+    if (!existing) return this.repository.createConversation(id, userId);
+
+    // Conversation ids are generated by the client, so a request can name any id:
+    // writing into someone else's conversation must be rejected explicitly.
+    if (existing.userId !== userId) {
+      throw new ForbiddenException('This conversation belongs to another user');
+    }
+    return existing;
   }
 
   private async persistMessages(
@@ -201,6 +231,7 @@ export class ChatService {
   }
 
   private async generateTitle(
+    userId: string,
     conversationId: string,
     messages: UIMessage[],
   ): Promise<void> {
@@ -213,6 +244,7 @@ export class ChatService {
       const result = await this.llm.generateText({
         name: 'chat.title',
         traceId: conversationId,
+        userId,
         model: 'fast',
         instructions: TITLE_INSTRUCTIONS,
         prompt: firstUserText.slice(0, 500),

@@ -5,6 +5,8 @@ export interface SseEvent {
 
 export interface StatusUpdateEvent {
   generationId: string;
+  /** Owner of the generation; events are only delivered to this user. */
+  userId: string;
   status: string;
   imageUrl?: string;
   textResult?: string;
@@ -14,6 +16,8 @@ export interface StatusUpdateEvent {
 
 export interface DocumentUpdateEvent {
   documentId: string;
+  /** Owner of the document; events are only delivered to this user. */
+  userId: string;
   status: string;
   chunkCount?: number;
   error?: string;

@@ -4,13 +4,18 @@ import { ConfigService } from '@nestjs/config';
 import type { NestExpressApplication } from '@nestjs/platform-express';
 import { Logger } from 'nestjs-pino';
 import helmet from 'helmet';
+import { toNodeHandler } from 'better-auth/node';
 import { AppModule } from './app.module';
 import { HttpExceptionFilter } from './shared/filters/http-exception.filter';
+import { AUTH_INSTANCE } from './modules/auth/auth.constants';
+import type { Auth } from './modules/auth/auth.instance';
 import type { AppConfiguration } from './config/configuration.interface';
 
 async function bootstrap() {
   const app = await NestFactory.create<NestExpressApplication>(AppModule, {
     bufferLogs: true,
+    // Better Auth reads the raw request body, so body parsers are registered below, after its handler.
+    bodyParser: false,
   });
 
   const configService =
@@ -19,8 +24,6 @@ async function bootstrap() {
 
   app.useLogger(app.get(Logger));
   app.setGlobalPrefix('api');
-  // Chat requests carry the whole conversation (tool results included).
-  app.useBodyParser('json', { limit: '5mb' });
 
   app.use(
     helmet({
@@ -33,6 +36,15 @@ async function bootstrap() {
     credentials: appConfig.cors.credentials,
     exposedHeaders: ['mcp-session-id', 'x-vercel-ai-ui-message-stream'],
   });
+
+  // Sign-up, sign-in, sessions and API keys are served by Better Auth itself.
+  const auth = app.get<Auth>(AUTH_INSTANCE);
+  const expressApp = app.getHttpAdapter().getInstance();
+  expressApp.all('/api/auth/*splat', toNodeHandler(auth));
+
+  // Chat requests carry the whole conversation (tool results included).
+  app.useBodyParser('json', { limit: '5mb' });
+  app.useBodyParser('urlencoded', { extended: true, limit: '1mb' });
 
   app.useGlobalPipes(
     new ValidationPipe({

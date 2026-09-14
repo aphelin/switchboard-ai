@@ -64,6 +64,7 @@ export class DocumentsRepository implements OnModuleInit {
   }
 
   async create(data: {
+    userId: string;
     title: string;
     content: string;
     source?: string;
@@ -79,24 +80,26 @@ export class DocumentsRepository implements OnModuleInit {
     });
   }
 
+  /** Unscoped lookup for internal use (queue workers). Request handlers use findByIdForUser. */
   findById(id: string) {
     return this.prisma.document.findUnique({ where: { id } });
   }
 
-  findSummaryById(id: string): Promise<DocumentSummary | null> {
-    return this.prisma.document.findUnique({
-      where: { id },
-      select: DOCUMENT_SUMMARY_SELECT,
-    });
+  findByIdForUser(id: string, userId: string) {
+    return this.prisma.document.findFirst({ where: { id, userId } });
   }
 
   async findMany(params: {
+    userId: string;
     status?: DocumentStatus;
     page: number;
     limit: number;
   }): Promise<PaginatedResult<DocumentSummary>> {
-    const { status, page, limit } = params;
-    const where: Prisma.DocumentWhereInput = status ? { status } : {};
+    const { userId, status, page, limit } = params;
+    const where: Prisma.DocumentWhereInput = {
+      userId,
+      ...(status && { status }),
+    };
 
     const [data, total] = await Promise.all([
       this.prisma.document.findMany({
@@ -112,9 +115,9 @@ export class DocumentsRepository implements OnModuleInit {
     return { data, total, page, limit, totalPages: Math.ceil(total / limit) };
   }
 
-  findReady(): Promise<DocumentSummary[]> {
+  findReady(userId: string): Promise<DocumentSummary[]> {
     return this.prisma.document.findMany({
-      where: { status: DocumentStatus.READY },
+      where: { userId, status: DocumentStatus.READY },
       select: DOCUMENT_SUMMARY_SELECT,
       orderBy: { createdAt: 'desc' },
     });
@@ -163,8 +166,13 @@ export class DocumentsRepository implements OnModuleInit {
     });
   }
 
-  /** Nearest neighbours by cosine similarity (score = 1 - cosine distance). */
+  /**
+   * Nearest neighbours by cosine similarity (score = 1 - cosine distance).
+   * The owner filter is part of the query: filtering results afterwards would let
+   * other users' passages take the top-k slots and silently shrink the result.
+   */
   vectorSearch(
+    userId: string,
     embedding: number[],
     limit: number,
     documentIds?: string[],
@@ -175,14 +183,18 @@ export class DocumentsRepository implements OnModuleInit {
              1 - (c.embedding <=> ${vector}::vector) AS score
       FROM "DocumentChunk" c
       JOIN "Document" d ON d.id = c."documentId"
-      WHERE d.status = 'READY' AND c.embedding IS NOT NULL ${this.documentFilter(documentIds)}
+      WHERE d."userId" = ${userId}
+        AND d.status = 'READY'
+        AND c.embedding IS NOT NULL
+        ${this.documentFilter(documentIds)}
       ORDER BY c.embedding <=> ${vector}::vector
       LIMIT ${limit}
     `);
   }
 
-  /** Postgres full-text search (BM25-like ranking via ts_rank_cd). */
+  /** Postgres full-text search (BM25-like ranking via ts_rank_cd), scoped to the owner. */
   keywordSearch(
+    userId: string,
     query: string,
     limit: number,
     documentIds?: string[],
@@ -195,7 +207,8 @@ export class DocumentsRepository implements OnModuleInit {
              ts_rank_cd(to_tsvector('english', c.content), to_tsquery('english', ${tsQuery})) AS score
       FROM "DocumentChunk" c
       JOIN "Document" d ON d.id = c."documentId"
-      WHERE d.status = 'READY'
+      WHERE d."userId" = ${userId}
+        AND d.status = 'READY'
         AND to_tsvector('english', c.content) @@ to_tsquery('english', ${tsQuery})
         ${this.documentFilter(documentIds)}
       ORDER BY score DESC

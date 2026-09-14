@@ -293,6 +293,7 @@ export class LlmService {
     await this.trace.record({
       name: context.name,
       traceId: context.traceId,
+      userId: context.userId,
       provider: this.registry.providerConfig(slot).name,
       model: modelId,
       ...usage,
@@ -321,6 +322,7 @@ export class LlmService {
     await this.trace.record({
       name: context.name,
       traceId: context.traceId,
+      userId: context.userId,
       provider: this.registry.providerConfig(slot).name,
       model: modelId,
       latencyMs: Date.now() - startedAt,

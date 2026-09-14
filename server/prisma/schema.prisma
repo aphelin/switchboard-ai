@@ -29,8 +29,118 @@ enum JobPriority {
   LOW
 }
 
+// ---------------------------------------------------------------------------
+// Auth (Better Auth). Models generated with `npx auth generate`; table names
+// are lowercase because the Better Auth Prisma adapter addresses them that way.
+// ---------------------------------------------------------------------------
+
+model User {
+  id            String         @id
+  name          String
+  email         String
+  emailVerified Boolean        @default(false)
+  image         String?
+  createdAt     DateTime       @default(now())
+  updatedAt     DateTime       @updatedAt
+  sessions      Session[]
+  accounts      Account[]
+  generations   Generation[]
+  documents     Document[]
+  conversations Conversation[]
+  llmCalls      LlmCall[]
+
+  @@unique([email])
+  @@map("user")
+}
+
+model Session {
+  id        String   @id
+  expiresAt DateTime
+  token     String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  ipAddress String?
+  userAgent String?
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([token])
+  @@index([userId])
+  @@map("session")
+}
+
+model Account {
+  id                    String    @id
+  accountId             String
+  providerId            String
+  userId                String
+  user                  User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  accessToken           String?
+  refreshToken          String?
+  idToken               String?
+  accessTokenExpiresAt  DateTime?
+  refreshTokenExpiresAt DateTime?
+  scope                 String?
+  password              String?
+  createdAt             DateTime  @default(now())
+  updatedAt             DateTime  @updatedAt
+
+  @@index([userId])
+  @@map("account")
+}
+
+model Verification {
+  id         String   @id
+  identifier String
+  value      String
+  expiresAt  DateTime
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  @@index([identifier])
+  @@map("verification")
+}
+
+/// API keys for MCP clients and scripts. `key` holds a hash; `referenceId` is the owning user id.
+model Apikey {
+  id                  String    @id
+  configId            String    @default("default")
+  name                String?
+  start               String?
+  referenceId         String
+  prefix              String?
+  key                 String
+  refillInterval      Int?
+  refillAmount        Int?
+  lastRefillAt        DateTime?
+  enabled             Boolean?  @default(true)
+  rateLimitEnabled    Boolean?  @default(true)
+  rateLimitTimeWindow Int?      @default(86400000)
+  rateLimitMax        Int?      @default(10)
+  requestCount        Int?      @default(0)
+  remaining           Int?
+  lastRequest         DateTime?
+  expiresAt           DateTime?
+  createdAt           DateTime
+  updatedAt           DateTime
+  permissions         String?
+  metadata            String?
+
+  @@index([configId])
+  @@index([referenceId])
+  @@index([key])
+  @@map("apikey")
+}
+
+// ---------------------------------------------------------------------------
+// Generations. `userId` is nullable only while rows created before auth are
+// unclaimed (expand/contract migration); the application always sets it.
+// ---------------------------------------------------------------------------
+
 model Generation {
   id             String         @id @default(uuid())
+  userId         String?
+  user           User?          @relation(fields: [userId], references: [id], onDelete: Cascade)
   prompt         String
   enhancedPrompt String?
   type           GenerationType
@@ -44,6 +154,7 @@ model Generation {
   createdAt      DateTime       @default(now())
   updatedAt      DateTime       @updatedAt
 
+  @@index([userId, createdAt])
   @@index([status])
   @@index([type])
   @@index([priority])
@@ -63,6 +174,8 @@ enum DocumentStatus {
 
 model Document {
   id         String          @id @default(uuid())
+  userId     String?
+  user       User?           @relation(fields: [userId], references: [id], onDelete: Cascade)
   title      String
   source     String? // original file name, if uploaded
   mimeType   String?
@@ -75,20 +188,21 @@ model Document {
   createdAt  DateTime        @default(now())
   updatedAt  DateTime        @updatedAt
 
+  @@index([userId, status])
   @@index([status])
   @@index([createdAt])
 }
 
 model DocumentChunk {
-  id         String                       @id @default(uuid())
+  id         String                      @id @default(uuid())
   documentId String
-  document   Document                     @relation(fields: [documentId], references: [id], onDelete: Cascade)
+  document   Document                    @relation(fields: [documentId], references: [id], onDelete: Cascade)
   index      Int
   content    String
   tokenCount Int
   /// Dimension must match EMBEDDING_DIMENSIONS. HNSW + full-text indexes are created at startup (see DocumentsRepository).
   embedding  Unsupported("vector(384)")?
-  createdAt  DateTime                     @default(now())
+  createdAt  DateTime                    @default(now())
 
   @@unique([documentId, index])
 }
@@ -99,11 +213,14 @@ model DocumentChunk {
 
 model Conversation {
   id        String    @id @default(uuid())
+  userId    String?
+  user      User?     @relation(fields: [userId], references: [id], onDelete: Cascade)
   title     String?
   messages  Message[]
   createdAt DateTime  @default(now())
   updatedAt DateTime  @updatedAt
 
+  @@index([userId, updatedAt])
   @@index([updatedAt])
 }
 
@@ -125,6 +242,8 @@ model Message {
 
 model LlmCall {
   id                String   @id @default(uuid())
+  userId            String?
+  user              User?    @relation(fields: [userId], references: [id], onDelete: Cascade)
   traceId           String? // conversation id, generation id, eval run id...
   name              String // e.g. "chat.stream", "prompt.enhance", "eval.judge"
   provider          String
@@ -139,6 +258,7 @@ model LlmCall {
   metadata          Json?
   createdAt         DateTime @default(now())
 
+  @@index([userId, createdAt])
   @@index([traceId])
   @@index([name])
   @@index([createdAt])

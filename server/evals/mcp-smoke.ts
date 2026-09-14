@@ -2,7 +2,9 @@
  * MCP smoke test: talks to the running API over Streamable HTTP like a real
  * MCP client would (Claude Code, Claude Desktop, MCP Inspector).
  *
- *   npm run mcp:smoke              # full run (needs an LLM key for ask_documents)
+ * The MCP endpoint requires an API key (create one in the app: user menu -> API keys).
+ *
+ *   MCP_API_KEY=mat_... npm run mcp:smoke              # full run (needs an LLM key for ask_documents)
  *   npm run mcp:smoke -- --skip-llm
  *   MCP_URL=http://host:4000/api/mcp npm run mcp:smoke
  */
@@ -13,6 +15,7 @@ import {
 
 const MCP_URL = process.env.MCP_URL ?? 'http://localhost:4000/api/mcp';
 const SKIP_LLM = process.argv.includes('--skip-llm');
+const MCP_API_KEY = process.env.MCP_API_KEY;
 const READY_TIMEOUT_MS = 20_000;
 
 const FIXTURE_TITLE = `MCP smoke fixture ${new Date().toISOString()}`;
@@ -48,12 +51,21 @@ const textOf = (result: ToolCallResult): string =>
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
 async function main(): Promise<void> {
+  if (!MCP_API_KEY) {
+    console.error(
+      'Set MCP_API_KEY to an API key (create one in the app: user menu -> API keys)',
+    );
+    process.exit(1);
+  }
+
   console.log(`Connecting to ${MCP_URL}`);
   const client = new Client({
     name: 'mini-ai-toolkit-smoke',
     version: '1.0.0',
   });
-  const transport = new StreamableHTTPClientTransport(new URL(MCP_URL));
+  const transport = new StreamableHTTPClientTransport(new URL(MCP_URL), {
+    requestInit: { headers: { 'x-api-key': MCP_API_KEY } },
+  });
   await client.connect(transport);
   console.log('Connected');
 

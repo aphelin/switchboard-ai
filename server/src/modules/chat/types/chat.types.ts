@@ -33,6 +33,8 @@ export interface SearchToolOutput {
 }
 
 export interface AnswerParams {
+  /** Owner whose documents are searched and whose budget is charged. */
+  userId: string;
   question: string;
   documentIds?: string[];
   traceId?: string;

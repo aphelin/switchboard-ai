@@ -15,6 +15,7 @@ import type {
  * run in parallel and are merged with Reciprocal Rank Fusion. Vectors catch
  * paraphrases ("staff" vs "employees"); keywords catch exact identifiers, names
  * and codes that embeddings blur. Together they beat either one alone.
+ * Both retrievers only see the requesting user's documents.
  */
 @Injectable()
 export class RetrievalService {
@@ -24,7 +25,7 @@ export class RetrievalService {
   ) {}
 
   async search(params: SearchParams): Promise<RetrievedChunk[]> {
-    const { query, documentIds, traceId } = params;
+    const { userId, query, documentIds, traceId } = params;
     const topK = params.topK ?? RAG.TOP_K;
     const mode = params.mode ?? 'hybrid';
     const pool = Math.max(RAG.CANDIDATE_POOL, topK);
@@ -33,13 +34,13 @@ export class RetrievalService {
       mode === 'keyword'
         ? Promise.resolve<ChunkRow[]>([])
         : this.embedding
-            .embedQuery(query, traceId)
+            .embedQuery(query, { traceId, userId })
             .then((vector) =>
-              this.repository.vectorSearch(vector, pool, documentIds),
+              this.repository.vectorSearch(userId, vector, pool, documentIds),
             ),
       mode === 'vector'
         ? Promise.resolve<ChunkRow[]>([])
-        : this.repository.keywordSearch(query, pool, documentIds),
+        : this.repository.keywordSearch(userId, query, pool, documentIds),
     ]);
 
     const fused = reciprocalRankFusion(

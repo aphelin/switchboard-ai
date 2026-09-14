@@ -8,27 +8,31 @@ import type { PaginatedResult } from '../../generation/types/generation.types';
 export class ChatRepository {
   constructor(private readonly prisma: PrismaService) {}
 
+  /** Unscoped on purpose: the service needs to tell "missing" from "owned by someone else". */
   findConversation(id: string) {
     return this.prisma.conversation.findUnique({ where: { id } });
   }
 
-  createConversation(id: string) {
-    return this.prisma.conversation.create({ data: { id } });
+  createConversation(id: string, userId: string) {
+    return this.prisma.conversation.create({ data: { id, userId } });
   }
 
   async listConversations(params: {
+    userId: string;
     page: number;
     limit: number;
   }): Promise<PaginatedResult<ConversationSummary>> {
-    const { page, limit } = params;
+    const { userId, page, limit } = params;
+    const where: Prisma.ConversationWhereInput = { userId };
     const [rows, total] = await Promise.all([
       this.prisma.conversation.findMany({
+        where,
         orderBy: { updatedAt: 'desc' },
         skip: (page - 1) * limit,
         take: limit,
         include: { _count: { select: { messages: true } } },
       }),
-      this.prisma.conversation.count(),
+      this.prisma.conversation.count({ where }),
     ]);
 
     return {

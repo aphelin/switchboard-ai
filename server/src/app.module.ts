@@ -4,6 +4,7 @@ import { ConfigService } from '@nestjs/config';
 import { ConfigModule } from './config/config.module';
 import { SharedModule } from './shared/shared.module';
 import { PrismaModule } from './prisma/prisma.module';
+import { AuthModule } from './modules/auth/auth.module';
 import { GenerationModule } from './modules/generation/generation.module';
 import { SseModule } from './modules/sse/sse.module';
 import { ObservabilityModule } from './modules/observability/observability.module';
@@ -19,6 +20,7 @@ import type { AppConfiguration } from './config/configuration.interface';
     ConfigModule,
     SharedModule,
     PrismaModule,
+    AuthModule,
     BullModule.forRootAsync({
       useFactory: (configService: ConfigService<AppConfiguration, true>) => {
         const redis = configService.get('redis', { infer: true });

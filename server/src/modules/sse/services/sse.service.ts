@@ -4,6 +4,7 @@ import { map, filter } from 'rxjs/operators';
 import type {
   DocumentUpdateEvent,
   InternalSseEvent,
+  SseEventPayload,
   StatusUpdateEvent,
 } from '../types/sse.types';
 import {
@@ -32,20 +33,31 @@ export class SseService {
     this.eventSubject.next({ type: SSE_EVENTS.DOCUMENT_UPDATE, payload });
   }
 
-  /** Stream of events, optionally restricted to the given event types. */
-  getEventStream(types?: readonly string[]): Observable<MessageEvent> {
+  /** The user's own events, optionally restricted to the given event types. */
+  getEventStream(
+    userId: string,
+    types?: readonly string[],
+  ): Observable<MessageEvent> {
     const events$ = this.eventSubject.asObservable().pipe(
-      filter((event) => !types || types.includes(event.type)),
+      filter(
+        (event) =>
+          event.payload.userId === userId &&
+          (!types || types.includes(event.type)),
+      ),
       map((event) => this.toMessageEvent(event)),
     );
 
     return merge(events$, this.heartbeat());
   }
 
-  getEventStreamForGeneration(generationId: string): Observable<MessageEvent> {
+  getEventStreamForGeneration(
+    userId: string,
+    generationId: string,
+  ): Observable<MessageEvent> {
     const events$ = this.eventSubject.asObservable().pipe(
       filter(
         (event) =>
+          event.payload.userId === userId &&
           'generationId' in event.payload &&
           event.payload.generationId === generationId,
       ),
@@ -56,8 +68,11 @@ export class SseService {
   }
 
   private toMessageEvent(event: InternalSseEvent): MessageEvent {
+    // The owner id is only used for routing; it is not sent to the browser.
+    const payload: Partial<SseEventPayload> = { ...event.payload };
+    delete payload.userId;
     return {
-      data: JSON.stringify({ type: event.type, ...event.payload }),
+      data: JSON.stringify({ type: event.type, ...payload }),
     } as MessageEvent;
   }
 

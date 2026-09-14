@@ -27,6 +27,12 @@ interface ResolvedPrompt {
   negativePrompt?: string;
 }
 
+/** Identifies the job being processed; the owner id routes SSE events and attributes LLM cost. */
+interface JobContext {
+  generationId: string;
+  userId: string;
+}
+
 @Processor(GENERATION_QUEUE)
 export class GenerationProcessor extends WorkerHost {
   private readonly logger = new Logger(GenerationProcessor.name);
@@ -47,33 +53,30 @@ export class GenerationProcessor extends WorkerHost {
   }
 
   async process(job: Job<GenerationJobData>): Promise<void> {
-    const { generationId, prompt, type, enhance, parameters } = job.data;
+    const { generationId, userId, prompt, type, enhance, parameters } =
+      job.data;
+    const context: JobContext = { generationId, userId };
 
     this.logger.log(`Processing generation ${generationId} (type: ${type})`);
 
     try {
       if (await this.isCancelled(generationId)) return;
 
-      await this.markAsGenerating(generationId);
+      await this.markAsGenerating(context);
 
-      const resolved = await this.resolvePrompt(
-        generationId,
-        prompt,
-        type,
-        enhance,
-      );
+      const resolved = await this.resolvePrompt(context, prompt, type, enhance);
 
       if (await this.isCancelled(generationId)) return;
 
       if (type === GenerationType.IMAGE) {
         await this.processImageGeneration(
-          generationId,
+          context,
           resolved,
           parameters as ImageParameters,
         );
       } else {
         await this.processTextGeneration(
-          generationId,
+          context,
           resolved,
           parameters as TextParameters,
         );
@@ -81,7 +84,7 @@ export class GenerationProcessor extends WorkerHost {
 
       this.logger.log(`Generation ${generationId} completed successfully`);
     } catch (error) {
-      await this.handleFailure(generationId, error);
+      await this.handleFailure(context, error);
     }
   }
 
@@ -94,27 +97,30 @@ export class GenerationProcessor extends WorkerHost {
     return false;
   }
 
-  private async markAsGenerating(generationId: string): Promise<void> {
+  private async markAsGenerating(context: JobContext): Promise<void> {
     await this.generationRepository.updateStatus(
-      generationId,
+      context.generationId,
       JobStatus.GENERATING,
     );
     this.sseService.emitStatusUpdate({
-      generationId,
+      ...context,
       status: JobStatus.GENERATING,
     });
   }
 
   /** Optional structured prompt enhancement; falls back to the original prompt on any failure. */
   private async resolvePrompt(
-    generationId: string,
+    context: JobContext,
     prompt: string,
     type: GenerationType,
     enhance: boolean,
   ): Promise<ResolvedPrompt> {
     if (!enhance || type !== GenerationType.IMAGE) return { prompt };
 
-    const enhanced = await this.promptEnhancer.enhance(prompt, generationId);
+    const enhanced = await this.promptEnhancer.enhance(prompt, {
+      traceId: context.generationId,
+      userId: context.userId,
+    });
     if (!enhanced) return { prompt };
 
     this.logger.log(
@@ -128,10 +134,11 @@ export class GenerationProcessor extends WorkerHost {
   }
 
   private async processImageGeneration(
-    generationId: string,
+    context: JobContext,
     resolved: ResolvedPrompt,
     parameters: ImageParameters | undefined,
   ): Promise<void> {
+    const { generationId } = context;
     const imageParams = parameters || {};
     const effectiveModel = imageParams.model || DEFAULT_IMAGE_MODEL;
     const negativePrompt =
@@ -169,7 +176,7 @@ export class GenerationProcessor extends WorkerHost {
     );
 
     this.sseService.emitGenerationComplete({
-      generationId,
+      ...context,
       status: JobStatus.COMPLETED,
       imageUrl,
       enhancedPrompt: resolved.enhancedPrompt,
@@ -177,16 +184,18 @@ export class GenerationProcessor extends WorkerHost {
   }
 
   private async processTextGeneration(
-    generationId: string,
+    context: JobContext,
     resolved: ResolvedPrompt,
     parameters: TextParameters | undefined,
   ): Promise<void> {
+    const { generationId } = context;
     const textParams = parameters || {};
     const modelSelector = textParams.model || 'main';
 
     const result = await this.llmService.generateText({
       name: 'generation.text',
       traceId: generationId,
+      userId: context.userId,
       model: modelSelector,
       instructions: textParams.systemPrompt,
       prompt: resolved.prompt,
@@ -208,7 +217,7 @@ export class GenerationProcessor extends WorkerHost {
     );
 
     this.sseService.emitGenerationComplete({
-      generationId,
+      ...context,
       status: JobStatus.COMPLETED,
       textResult: result.text,
       enhancedPrompt: resolved.enhancedPrompt,
@@ -216,9 +225,10 @@ export class GenerationProcessor extends WorkerHost {
   }
 
   private async handleFailure(
-    generationId: string,
+    context: JobContext,
     error: unknown,
   ): Promise<void> {
+    const { generationId } = context;
     const errorMessage =
       error instanceof Error ? error.message : 'Unknown error occurred';
 
@@ -235,7 +245,7 @@ export class GenerationProcessor extends WorkerHost {
       );
 
       this.sseService.emitStatusUpdate({
-        generationId,
+        ...context,
         status: JobStatus.FAILED,
         error: errorMessage,
       });

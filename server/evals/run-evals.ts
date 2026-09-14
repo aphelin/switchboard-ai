@@ -17,6 +17,7 @@
 import { NestFactory } from '@nestjs/core';
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
+import { randomUUID } from 'node:crypto';
 import { AppModule } from '../src/app.module';
 import { DocumentsService } from '../src/modules/documents/services/documents.service';
 import { RetrievalService } from '../src/modules/documents/services/retrieval.service';
@@ -61,6 +62,8 @@ interface Services {
   llm: LlmService;
   trace: TraceService;
   prisma: PrismaService;
+  /** Eval data belongs to a dedicated user so it never mixes with real accounts. */
+  userId: string;
 }
 
 /** The compiled runner lives in dist/eval/evals; the dataset and fixtures stay in evals/. */
@@ -95,16 +98,31 @@ function loadDataset(evalsDir: string): EvalCase[] {
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
+const EVAL_USER_EMAIL = 'eval-runner@mini-ai-toolkit.local';
+
+/** A user row without an account: it owns eval data but has no password and cannot sign in. */
+async function ensureEvalUser(prisma: PrismaService): Promise<string> {
+  const user = await prisma.user.upsert({
+    where: { email: EVAL_USER_EMAIL },
+    update: {},
+    create: { id: randomUUID(), name: 'Eval runner', email: EVAL_USER_EMAIL },
+  });
+  return user.id;
+}
+
 async function ingestFixtures(
   services: Services,
   evalsDir: string,
 ): Promise<{ ids: string[]; titles: Map<string, string> }> {
   const stale = await services.prisma.document.findMany({
-    where: { metadata: { path: ['evalFixture'], equals: true } },
+    where: {
+      userId: services.userId,
+      metadata: { path: ['evalFixture'], equals: true },
+    },
     select: { id: true, title: true },
   });
   for (const doc of stale) {
-    await services.documents.remove(doc.id);
+    await services.documents.remove(services.userId, doc.id);
   }
   if (stale.length)
     console.log(`Removed ${stale.length} stale eval fixture document(s)`);
@@ -116,6 +134,7 @@ async function ingestFixtures(
       'utf8',
     );
     const doc = await services.documents.create(
+      services.userId,
       { title: fixture.title, content },
       { evalFixture: true, fixture: fixture.file },
     );
@@ -126,7 +145,7 @@ async function ingestFixtures(
   const deadline = Date.now() + INGESTION_TIMEOUT_MS;
   while (Date.now() < deadline) {
     const docs = await Promise.all(
-      ids.map((id) => services.documents.findOne(id)),
+      ids.map((id) => services.documents.findOne(services.userId, id)),
     );
     const failed = docs.find((d) => d.status === DocumentStatus.FAILED);
     if (failed)
@@ -155,6 +174,7 @@ async function evaluateRetrieval(
 ): Promise<RetrievalResult> {
   const startedAt = Date.now();
   const results = await services.retrieval.search({
+    userId: services.userId,
     query: evalCase.question,
     topK: EVAL_TOP_K,
     documentIds,
@@ -184,6 +204,7 @@ async function evaluateGeneration(
 ): Promise<GenerationResult> {
   const startedAt = Date.now();
   const answer = await services.chat.answer({
+    userId: services.userId,
     question: evalCase.question,
     documentIds,
     traceId: runId,
@@ -206,6 +227,7 @@ async function evaluateGeneration(
     judge = await services.llm.generateObject(JudgeSchema, {
       name: 'eval.judge',
       traceId: runId,
+      userId: services.userId,
       metadata: { caseId: evalCase.id, judgeVersion: JUDGE_PROMPT_VERSION },
       model: 'main',
       instructions: JUDGE_INSTRUCTIONS,
@@ -368,6 +390,7 @@ function computeMetrics(
 
 async function collectUsage(
   trace: TraceService,
+  userId: string,
   runId: string,
 ): Promise<UsageTotals> {
   const totals: UsageTotals = {
@@ -380,7 +403,12 @@ async function collectUsage(
   };
   let page = 1;
   for (;;) {
-    const result = await trace.list({ traceId: runId, page, limit: 200 });
+    const result = await trace.list({
+      userId,
+      traceId: runId,
+      page,
+      limit: 200,
+    });
     for (const call of result.data) {
       totals.calls++;
       totals.inputTokens += call.inputTokens ?? 0;
@@ -437,6 +465,7 @@ async function main(): Promise<void> {
       llm: app.get(LlmService),
       trace: app.get(TraceService),
       prisma: app.get(PrismaService),
+      userId: await ensureEvalUser(app.get(PrismaService)),
     };
     const registry = app.get(ModelRegistryService);
     const embedding = app.get(EmbeddingService);
@@ -497,7 +526,7 @@ async function main(): Promise<void> {
     }
 
     const metrics = computeMetrics(cases, retrievalOnly);
-    const usage = await collectUsage(services.trace, runId);
+    const usage = await collectUsage(services.trace, services.userId, runId);
     passed =
       metrics.every((m) => m.passed !== false) && cases.every((c) => !c.error);
 

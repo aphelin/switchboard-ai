@@ -11,6 +11,8 @@ import { NodeStreamableHTTPServerTransport } from '@modelcontextprotocol/node';
 import type { Request, Response } from 'express';
 import { McpService } from '../services/mcp.service';
 import { SkipAllThrottles } from '../../../shared/decorators/skip-all-throttles.decorator';
+import { CurrentUser } from '../../auth/decorators/current-user.decorator';
+import type { AuthUser } from '../../auth/types/auth.types';
 
 const METHOD_NOT_ALLOWED = {
   jsonrpc: '2.0',
@@ -20,10 +22,13 @@ const METHOD_NOT_ALLOWED = {
 
 /**
  * MCP endpoint (Streamable HTTP, stateless): `POST /api/mcp`.
+ * Clients authenticate with an API key (`x-api-key` or `Authorization: Bearer`);
+ * the global AuthGuard resolves the key's owner and every tool is scoped to that user.
  * Each request gets its own server + transport, so there are no sessions to
  * track and the endpoint scales horizontally. GET (SSE resumption) and DELETE
  * (session teardown) only make sense for stateful servers and return 405.
- * MCP clients burst several requests on connect, so the route is not throttled.
+ * MCP clients burst several requests on connect, so the route is not throttled;
+ * costly tools are still bounded by the user's daily AI budget.
  */
 @Controller('mcp')
 @SkipAllThrottles()
@@ -33,8 +38,12 @@ export class McpController {
   constructor(private readonly mcpService: McpService) {}
 
   @Post()
-  async handle(@Req() req: Request, @Res() res: Response): Promise<void> {
-    const server = this.mcpService.createServer();
+  async handle(
+    @CurrentUser() user: AuthUser,
+    @Req() req: Request,
+    @Res() res: Response,
+  ): Promise<void> {
+    const server = this.mcpService.createServer(user.id);
     const transport = new NodeStreamableHTTPServerTransport({
       sessionIdGenerator: undefined,
     });

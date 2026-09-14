@@ -11,6 +11,7 @@ import { defer, firstValueFrom, merge } from 'rxjs';
 import { filter, map, timeout } from 'rxjs/operators';
 import { GenerationRepository } from '../repositories/generation.repository';
 import { SseService } from '../../sse/services/sse.service';
+import { BudgetService } from '../../auth/services/budget.service';
 import { CreateGenerationDto } from '../dto/create-generation.dto';
 import { QueryGenerationDto } from '../dto/query-generation.dto';
 import {
@@ -20,7 +21,7 @@ import {
   JOB_BACKOFF_DELAY,
   BULLMQ_PRIORITY,
 } from '../../../shared/constants/app.constants';
-import { JobStatus, JobPriority } from 'generated/prisma/enums';
+import { GenerationType, JobStatus, JobPriority } from 'generated/prisma/enums';
 import type {
   Generation,
   GenerationJobData,
@@ -42,13 +43,20 @@ export class GenerationService {
   constructor(
     private readonly generationRepository: GenerationRepository,
     private readonly sseService: SseService,
+    private readonly budget: BudgetService,
     @InjectQueue(GENERATION_QUEUE) private readonly generationQueue: Queue,
   ) {}
 
-  async create(dto: CreateGenerationDto): Promise<Generation> {
+  async create(userId: string, dto: CreateGenerationDto): Promise<Generation> {
+    // Text generation and prompt enhancement are LLM calls that count toward the daily budget.
+    if (dto.type === GenerationType.TEXT || dto.enhance) {
+      await this.budget.assertWithinBudget(userId);
+    }
+
     const priority = dto.priority ?? JobPriority.NORMAL;
 
     const generation = await this.generationRepository.create({
+      userId,
       prompt: dto.prompt,
       type: dto.type,
       priority,
@@ -57,6 +65,7 @@ export class GenerationService {
 
     const jobData: GenerationJobData = {
       generationId: generation.id,
+      userId,
       prompt: dto.prompt,
       type: dto.type,
       enhance: dto.enhance ?? false,
@@ -79,9 +88,11 @@ export class GenerationService {
   }
 
   async findAll(
+    userId: string,
     query: QueryGenerationDto,
   ): Promise<PaginatedResult<Generation>> {
     return this.generationRepository.findMany({
+      userId,
       type: query.type,
       status: query.status,
       page: query.page ?? 1,
@@ -89,8 +100,12 @@ export class GenerationService {
     });
   }
 
-  async findOne(id: string): Promise<Generation> {
-    const generation = await this.generationRepository.findById(id);
+  /** Another user's generation is reported as not found, so ids can't be probed. */
+  async findOne(userId: string, id: string): Promise<Generation> {
+    const generation = await this.generationRepository.findByIdForUser(
+      id,
+      userId,
+    );
     if (!generation) {
       throw new NotFoundException(`Generation ${id} not found`);
     }
@@ -103,6 +118,7 @@ export class GenerationService {
    * synchronous callers (agent tools, MCP) build on the async queue without polling.
    */
   async waitForTerminalStatus(
+    userId: string,
     id: string,
     timeoutMs: number,
   ): Promise<Generation> {
@@ -116,7 +132,7 @@ export class GenerationService {
       map(() => undefined),
     );
     // Checked after subscribing to the event bus, so a status change can't slip between the two.
-    const fromDatabase$ = defer(() => this.findOne(id)).pipe(
+    const fromDatabase$ = defer(() => this.findOne(userId, id)).pipe(
       filter((generation) => TERMINAL_STATUSES.has(generation.status)),
       map(() => undefined),
     );
@@ -131,11 +147,11 @@ export class GenerationService {
       );
     }
 
-    return this.findOne(id);
+    return this.findOne(userId, id);
   }
 
-  async retry(id: string): Promise<Generation> {
-    const generation = await this.findOne(id);
+  async retry(userId: string, id: string): Promise<Generation> {
+    const generation = await this.findOne(userId, id);
 
     if (
       generation.status !== JobStatus.FAILED &&
@@ -146,6 +162,10 @@ export class GenerationService {
       );
     }
 
+    if (generation.type === GenerationType.TEXT) {
+      await this.budget.assertWithinBudget(userId);
+    }
+
     const updated = await this.generationRepository.updateStatus(
       id,
       JobStatus.PENDING,
@@ -153,6 +173,7 @@ export class GenerationService {
 
     const jobData: GenerationJobData = {
       generationId: generation.id,
+      userId,
       prompt: generation.prompt,
       type: generation.type,
       enhance: false,
@@ -175,8 +196,8 @@ export class GenerationService {
     return { ...updated, jobId: job.id! };
   }
 
-  async cancel(id: string): Promise<Generation> {
-    const generation = await this.findOne(id);
+  async cancel(userId: string, id: string): Promise<Generation> {
+    const generation = await this.findOne(userId, id);
 
     if (
       generation.status !== JobStatus.PENDING &&
@@ -204,6 +225,7 @@ export class GenerationService {
     );
     this.sseService.emitStatusUpdate({
       generationId: id,
+      userId,
       status: JobStatus.CANCELLED,
     });
     this.logger.log(`Generation ${id} cancelled`);

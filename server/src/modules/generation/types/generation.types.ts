@@ -7,6 +7,7 @@ import type {
 
 export interface Generation {
   id: string;
+  userId: string | null;
   prompt: string;
   enhancedPrompt: string | null;
   type: GenerationType;
@@ -23,6 +24,7 @@ export interface Generation {
 
 export interface GenerationJobData {
   generationId: string;
+  userId: string;
   prompt: string;
   type: GenerationType;
   enhance: boolean;

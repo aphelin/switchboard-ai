@@ -13,6 +13,7 @@ import type {
   EmbeddingConfig,
 } from '../../../config/configuration.interface';
 import { EMBEDDING_BATCH_SIZE } from '../../../shared/constants/app.constants';
+import type { TraceContext } from '../types/llm.types';
 
 /** BGE models are trained with this prefix on the query side (not on passages). */
 const BGE_QUERY_PREFIX =
@@ -70,17 +71,23 @@ export class EmbeddingService implements OnModuleInit {
   }
 
   /** Embeds passages for indexing (title + chunk text is passed by the caller). */
-  async embedDocuments(texts: string[], traceId?: string): Promise<number[][]> {
+  async embedDocuments(
+    texts: string[],
+    context: TraceContext = {},
+  ): Promise<number[][]> {
     if (texts.length === 0) return [];
-    return this.timed('embedding.documents', traceId, texts.length, () =>
+    return this.timed('embedding.documents', context, texts.length, () =>
       this.embedBatched(texts),
     );
   }
 
   /** Embeds a search query (applies the model's query instruction if it has one). */
-  async embedQuery(text: string, traceId?: string): Promise<number[]> {
+  async embedQuery(
+    text: string,
+    context: TraceContext = {},
+  ): Promise<number[]> {
     const input = this.isBgeModel ? `${BGE_QUERY_PREFIX}${text}` : text;
-    const [vector] = await this.timed('embedding.query', traceId, 1, () =>
+    const [vector] = await this.timed('embedding.query', context, 1, () =>
       this.embedBatched([input]),
     );
     return vector;
@@ -155,7 +162,7 @@ export class EmbeddingService implements OnModuleInit {
 
   private async timed<T>(
     name: string,
-    traceId: string | undefined,
+    context: TraceContext,
     count: number,
     run: () => Promise<T>,
   ): Promise<T> {
@@ -164,7 +171,8 @@ export class EmbeddingService implements OnModuleInit {
       const result = await run();
       await this.trace.record({
         name,
-        traceId,
+        traceId: context.traceId,
+        userId: context.userId,
         provider: this.config.provider,
         model: this.config.model,
         costUsd: this.config.provider === 'local' ? 0 : null,
@@ -176,7 +184,8 @@ export class EmbeddingService implements OnModuleInit {
     } catch (error) {
       await this.trace.record({
         name,
-        traceId,
+        traceId: context.traceId,
+        userId: context.userId,
         provider: this.config.provider,
         model: this.config.model,
         latencyMs: Date.now() - startedAt,

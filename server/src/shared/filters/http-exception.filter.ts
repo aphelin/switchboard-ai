@@ -43,7 +43,7 @@ const extractFromHttpException = (
   const status = exception.getStatus();
   const exceptionResponse = exception.getResponse();
   let message = 'Internal server error';
-  let error = 'Internal Server Error';
+  let error = statusLabel(status);
 
   if (typeof exceptionResponse === 'string') {
     message = exceptionResponse;
@@ -55,6 +55,17 @@ const extractFromHttpException = (
 
   return { status, message, error };
 };
+
+/** "TOO_MANY_REQUESTS" -> "Too Many Requests", for exceptions created from a plain message. */
+function statusLabel(status: number): string {
+  const name = HttpStatus[status] as string | undefined;
+  if (!name) return 'Error';
+  return name
+    .toLowerCase()
+    .split('_')
+    .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
+    .join(' ');
+}
 
 const formatCircuitBreakerError = (): ExceptionResponse => ({
   status: HttpStatus.SERVICE_UNAVAILABLE,

@@ -1,20 +1,14 @@
 import { Global, Module } from '@nestjs/common';
-import { APP_GUARD } from '@nestjs/core';
-import { ThrottlerGuard } from '@nestjs/throttler';
 import { LoggerModule } from './logger/logger.module';
 import { ThrottlerModule } from './throttler/throttler.module';
 import { CircuitBreakerService } from './circuit-breaker/circuit-breaker.service';
 import { StorageService } from './storage/storage.service';
 
+// The throttler guard is registered in AuthModule, after AuthGuard, so limits apply per user.
 @Global()
 @Module({
   imports: [LoggerModule, ThrottlerModule],
-  providers: [
-    CircuitBreakerService,
-    StorageService,
-    // Enforces THROTTLE_CONFIGS on every route; streaming/asset routes opt out with @SkipThrottle().
-    { provide: APP_GUARD, useClass: ThrottlerGuard },
-  ],
+  providers: [CircuitBreakerService, StorageService],
   exports: [
     CircuitBreakerService,
     StorageService,
