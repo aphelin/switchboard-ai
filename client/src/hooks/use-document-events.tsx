@@ -21,7 +21,7 @@ export function useDocumentEvents(onEvent: (event: DocumentSseEvent) => void) {
 
     function connect() {
       if (disposed) return;
-      source = new EventSource(getDocumentsSSEUrl());
+      source = new EventSource(getDocumentsSSEUrl(), { withCredentials: true });
       source.onopen = () => setConnected(true);
       source.onmessage = (message) => {
         try {

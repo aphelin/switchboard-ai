@@ -20,6 +20,7 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import { createGeneration } from "@/lib/api";
+import { toastApiError } from "@/lib/api-errors";
 import { GenerationType, JobPriority } from "@/lib/constants";
 import type { CreateGenerationPayload } from "@/lib/types";
 import { toast } from "sonner";
@@ -70,9 +71,7 @@ export function PromptForm({ onCreated }: PromptFormProps) {
       setPrompt("");
       onCreated?.();
     } catch (err) {
-      toast.error(
-        err instanceof Error ? err.message : "Failed to create generation",
-      );
+      toastApiError(err, "Failed to create generation");
     } finally {
       setLoading(false);
     }

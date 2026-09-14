@@ -4,6 +4,7 @@ import { Toaster } from '@/components/ui/sonner';
 import { Navbar } from '@/components/layout/navbar';
 import { ThemeProvider } from '@/components/layout/theme-provider';
 import { SseProvider } from '@/hooks/use-sse';
+import { AuthGate } from '@/components/auth/auth-gate';
 import './globals.css';
 
 const geistSans = Geist({
@@ -60,13 +61,16 @@ export default function RootLayout({
         className={`${geistSans.variable} ${geistMono.variable} antialiased`}
       >
         <ThemeProvider>
-          <SseProvider>
-            <Navbar />
-            <main className="mx-auto min-h-[calc(100vh-3.5rem)] max-w-6xl px-4 py-6">
-              {children}
-            </main>
-            <Toaster />
-          </SseProvider>
+          {/* Nothing inside the gate mounts (no API calls, no SSE) until a session exists. */}
+          <AuthGate>
+            <SseProvider>
+              <Navbar />
+              <main className="mx-auto min-h-[calc(100vh-3.5rem)] max-w-6xl px-4 py-6">
+                {children}
+              </main>
+            </SseProvider>
+          </AuthGate>
+          <Toaster />
         </ThemeProvider>
       </body>
     </html>

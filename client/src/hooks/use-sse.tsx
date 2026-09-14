@@ -35,7 +35,8 @@ export function SseProvider({ children }: { children: ReactNode }) {
 
     function connect() {
       if (disposed) return;
-      eventSource = new EventSource(getSSEUrl());
+      // withCredentials sends the session cookie (EventSource cannot set headers).
+      eventSource = new EventSource(getSSEUrl(), { withCredentials: true });
 
       eventSource.onopen = () => setConnected(true);
 

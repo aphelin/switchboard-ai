@@ -237,3 +237,16 @@ export interface TraceSummary {
     avgLatencyMs: number;
   }>;
 }
+
+export interface MeResponse {
+  user: {
+    id: string;
+    name: string;
+    email: string;
+  };
+  usage: {
+    spentTodayUsd: number;
+    /** null means no daily limit is configured. */
+    dailyBudgetUsd: number | null;
+  };
+}

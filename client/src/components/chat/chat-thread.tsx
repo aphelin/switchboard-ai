@@ -12,7 +12,8 @@ import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { MessageList } from "./message-bubble";
 import { getChatUrl } from "@/lib/api";
-import { toast } from "sonner";
+import { fromChatError, isBudgetError, toastApiError } from "@/lib/api-errors";
+import { notifyUnauthorized } from "@/lib/auth-events";
 
 interface ChatThreadProps {
   conversationId: string;
@@ -36,7 +37,8 @@ export function ChatThread({
   onResponseFinished,
 }: ChatThreadProps) {
   const transport = useMemo(
-    () => new DefaultChatTransport({ api: getChatUrl() }),
+    // credentials: the session cookie must reach the API's streaming endpoint.
+    () => new DefaultChatTransport({ api: getChatUrl(), credentials: "include" }),
     [],
   );
   // The document scope can change mid-conversation, so it is sent per request.
@@ -58,12 +60,21 @@ export function ChatThread({
     // After the user approves/denies a tool call, resume the run automatically.
     sendAutomaticallyWhen: lastAssistantMessageIsCompleteWithApprovalResponses,
     onFinish: () => onResponseFinished?.(),
-    onError: (err) => toast.error(err.message),
+    onError: (err) => {
+      const apiError = fromChatError(err);
+      if (apiError.status === 401) {
+        notifyUnauthorized();
+        return;
+      }
+      toastApiError(apiError, "The assistant failed to respond");
+    },
   });
 
   const [input, setInput] = useState("");
   const bottomRef = useRef<HTMLDivElement>(null);
   const busy = status === "submitted" || status === "streaming";
+  const displayError = error ? fromChatError(error) : null;
+  const budgetReached = displayError ? isBudgetError(displayError) : false;
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
@@ -112,14 +123,22 @@ export function ChatThread({
         <div ref={bottomRef} />
       </div>
 
-      {error && (
-        <div className="mx-4 mb-2 flex items-center justify-between gap-2 rounded-lg border border-destructive/40 bg-destructive/5 px-3 py-2 text-xs text-destructive">
-          <span className="truncate">{error.message}</span>
+      {displayError && (
+        <div
+          className="mx-4 mb-2 flex items-center justify-between gap-2 rounded-lg border border-destructive/40 bg-destructive/5 px-3 py-2 text-xs text-destructive"
+          data-testid="chat-error"
+        >
+          <span className="min-w-0">
+            {budgetReached && <span className="font-semibold">Daily AI budget reached. </span>}
+            {displayError.message}
+          </span>
           <div className="flex shrink-0 gap-1">
-            <Button variant="ghost" size="xs" className="gap-1" onClick={() => regenerate(requestOptions)}>
-              <RotateCcw className="h-3 w-3" />
-              Retry
-            </Button>
+            {!budgetReached && (
+              <Button variant="ghost" size="xs" className="gap-1" onClick={() => regenerate(requestOptions)}>
+                <RotateCcw className="h-3 w-3" />
+                Retry
+              </Button>
+            )}
             <Button variant="ghost" size="xs" onClick={clearError}>
               Dismiss
             </Button>

@@ -15,6 +15,7 @@ import {
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
+import { UserMenu } from "@/components/auth/user-menu";
 
 const links = [
   { href: "/", label: "Generate", icon: Sparkles },
@@ -55,11 +56,13 @@ export function Navbar() {
           ))}
         </nav>
 
-        <div className="ml-auto md:hidden">
+        <div className="ml-auto flex items-center gap-1">
+          <UserMenu />
           <Button
             variant="ghost"
             size="icon"
-            className="h-10 w-10"
+            className="h-10 w-10 md:hidden"
+            aria-label={mobileOpen ? "Close menu" : "Open menu"}
             onClick={() => setMobileOpen(!mobileOpen)}
           >
             {mobileOpen ? (

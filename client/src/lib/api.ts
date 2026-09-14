@@ -12,24 +12,42 @@ import type {
   ConversationDetail,
   LlmCall,
   TraceSummary,
+  MeResponse,
 } from './types';
 import type { DocumentStatus } from './constants';
+import { ApiError, messageFromBody, type ApiErrorBody } from './api-errors';
+import { notifyUnauthorized } from './auth-events';
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:4000/api';
 
 const apiClient = axios.create({
   baseURL: API_URL,
   headers: { 'Content-Type': 'application/json' },
+  // The session is an httpOnly cookie set by the API.
+  withCredentials: true,
 });
 
 apiClient.interceptors.response.use(
   (response) => response,
-  (error: AxiosError<{ message?: string }>) => {
-    const message =
-      error.response?.data?.message || error.message || 'Request failed';
-    return Promise.reject(new Error(message));
+  (error: AxiosError<ApiErrorBody>) => {
+    const status = error.response?.status;
+    // The session expired or was revoked: let the auth gate re-check it.
+    if (status === 401) notifyUnauthorized();
+
+    const body = error.response?.data;
+    const message = messageFromBody(body) || error.message || 'Request failed';
+    return Promise.reject(new ApiError(message, status, body?.error));
   },
 );
+
+// ---------------------------------------------------------------------------
+// Account
+// ---------------------------------------------------------------------------
+
+export async function getMe(): Promise<MeResponse> {
+  const { data } = await apiClient.get<MeResponse>('/me');
+  return data;
+}
 
 // ---------------------------------------------------------------------------
 // Generations
