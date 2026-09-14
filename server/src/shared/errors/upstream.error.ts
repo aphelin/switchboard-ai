@@ -1,5 +1,6 @@
 import { HttpException, HttpStatus } from '@nestjs/common';
 import { isAxiosError } from 'axios';
+import { redactSecrets } from '../ai/redact-secrets';
 
 /**
  * A failure from an external AI provider, with the upstream HTTP status when known.
@@ -42,9 +43,13 @@ export const isCircuitOpenError = (error: unknown): boolean =>
 /** Extracts an HTTP status from axios errors and AI SDK `APICallError`s. */
 export const upstreamStatusOf = (error: unknown): number | undefined => {
   if (isAxiosError(error)) return error.response?.status;
+  if (error instanceof UpstreamError) return error.status;
   if (typeof error === 'object' && error !== null) {
     const status = (error as { statusCode?: unknown }).statusCode;
     if (typeof status === 'number') return status;
+    // AI SDK RetryError: the status is on the last attempt's error.
+    const lastError = (error as { lastError?: unknown }).lastError;
+    if (lastError && lastError !== error) return upstreamStatusOf(lastError);
   }
   return undefined;
 };
@@ -76,5 +81,6 @@ export const toUpstreamError = (
       message = `HTTP ${status}${upstreamMessage ? ` - ${upstreamMessage}` : ''}`;
     }
   }
-  return new UpstreamError(service, status, message);
+  // Provider error bodies can echo the key that was sent.
+  return new UpstreamError(service, status, redactSecrets(message));
 };

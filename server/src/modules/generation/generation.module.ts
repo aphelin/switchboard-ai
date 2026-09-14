@@ -6,6 +6,7 @@ import { GenerationRepository } from './repositories/generation.repository';
 import { GenerationProcessor } from './processors/generation.processor';
 import { PollinationsModule } from '../pollinations/pollinations.module';
 import { LlmModule } from '../llm/llm.module';
+import { ProvidersModule } from '../providers/providers.module';
 import { GENERATION_QUEUE } from '../../shared/constants/app.constants';
 
 @Module({
@@ -13,6 +14,7 @@ import { GENERATION_QUEUE } from '../../shared/constants/app.constants';
     BullModule.registerQueue({ name: GENERATION_QUEUE }),
     PollinationsModule,
     LlmModule,
+    ProvidersModule,
   ],
   controllers: [GenerationController],
   providers: [GenerationService, GenerationRepository, GenerationProcessor],

@@ -15,10 +15,7 @@ import {
   GenerationType,
   JobPriority,
 } from '../../../../generated/prisma/enums.js';
-import {
-  ImageModel,
-  TextModel,
-} from '../../../shared/constants/models.constants.js';
+import { ImageModel } from '../../../shared/constants/models.constants.js';
 
 export class ImageParametersDto {
   @IsOptional()
@@ -48,10 +45,6 @@ export class ImageParametersDto {
 
 export class TextParametersDto {
   @IsOptional()
-  @IsEnum(TextModel)
-  model?: TextModel;
-
-  @IsOptional()
   @IsNumber()
   @Min(0)
   @Max(2)
@@ -78,6 +71,16 @@ export class CreateGenerationDto {
   @IsOptional()
   @IsEnum(JobPriority)
   priority?: JobPriority;
+
+  /**
+   * Catalog model id (GET /api/providers) for text generation and prompt
+   * enhancement; default: the included model. Checked against the catalog and
+   * the user's stored keys by the service.
+   */
+  @IsOptional()
+  @IsString()
+  @MaxLength(120)
+  llmModel?: string;
 
   @IsOptional()
   @ValidateNested()

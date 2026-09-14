@@ -28,6 +28,8 @@ export interface GenerationJobData {
   prompt: string;
   type: GenerationType;
   enhance: boolean;
+  /** Catalog model id for text generation / prompt enhancement (default: the included model). */
+  llmModel?: string;
   parameters?: ImageParameters | TextParameters;
 }
 
@@ -41,6 +43,7 @@ export interface ImageParameters {
 }
 
 export interface TextParameters {
+  /** Provider model id that produced the result (set by the worker). */
   model?: string;
   temperature?: number;
   systemPrompt?: string;

@@ -67,6 +67,14 @@ const documentIdsSchema = z
   .optional()
   .describe('Restrict to these document ids (default: all indexed documents)');
 
+const modelSchema = z
+  .string()
+  .max(120)
+  .optional()
+  .describe(
+    'Model id from GET /api/providers, e.g. "anthropic:claude-sonnet-5" (needs your own key for that provider). Default: the included model.',
+  );
+
 /**
  * Exposes the toolkit to MCP clients (Claude Code, Claude Desktop, MCP Inspector).
  * Every tool is a thin, typed wrapper over an existing service, so an agent can
@@ -200,6 +208,7 @@ export class McpService {
             .max(2)
             .optional()
             .describe('Sampling temperature'),
+          model: modelSchema,
         }),
         annotations: {
           readOnlyHint: false,
@@ -208,12 +217,13 @@ export class McpService {
           openWorldHint: true,
         },
       },
-      async ({ prompt, systemPrompt, temperature }) => {
+      async ({ prompt, systemPrompt, temperature, model }) => {
         try {
           const created = await this.generations.create(userId, {
             prompt,
             type: GenerationType.TEXT,
             priority: JobPriority.HIGH,
+            llmModel: model,
             parameters: { systemPrompt, temperature },
           });
           const final = await this.generations.waitForTerminalStatus(
@@ -424,6 +434,7 @@ export class McpService {
             .max(2000)
             .describe('The question to answer'),
           documentIds: documentIdsSchema,
+          model: modelSchema,
         }),
         annotations: {
           readOnlyHint: true,
@@ -432,12 +443,13 @@ export class McpService {
           openWorldHint: false,
         },
       },
-      async ({ question, documentIds }) => {
+      async ({ question, documentIds, model }) => {
         try {
           const answer = await this.chat.answer({
             userId,
             question,
             documentIds,
+            model,
             traceId: `mcp:${randomUUID()}`,
           });
           const sources = answer.sources.map((s) => ({
@@ -459,6 +471,7 @@ export class McpService {
             searches: answer.searches,
             steps: answer.steps,
             usage: answer.usage,
+            model: answer.model,
           });
         } catch (error) {
           return fail(error);

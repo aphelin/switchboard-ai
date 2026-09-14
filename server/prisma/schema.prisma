@@ -48,6 +48,7 @@ model User {
   documents     Document[]
   conversations Conversation[]
   llmCalls      LlmCall[]
+  providerCredentials ProviderCredential[]
 
   @@unique([email])
   @@map("user")
@@ -130,6 +131,23 @@ model Apikey {
   @@index([referenceId])
   @@index([key])
   @@map("apikey")
+}
+
+/// A user's own API key for an LLM provider (bring your own key). `encryptedKey` is
+/// AES-256-GCM bound to the user and provider (see SecretBox); the plaintext is never
+/// stored, logged or returned by the API.
+model ProviderCredential {
+  id           String   @id @default(uuid())
+  userId       String
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  provider     String // "openai" | "anthropic" | "google"
+  encryptedKey String
+  /// Last 4 characters of the key, so the UI can show which key is stored.
+  keyHint      String
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  @@unique([userId, provider])
 }
 
 // ---------------------------------------------------------------------------
@@ -254,6 +272,8 @@ model LlmCall {
   costUsd           Float?
   latencyMs         Int
   status            String // "ok" | "error"
+  /// "platform" = the app's provider key (counts toward the daily budget), "user" = the user's own key
+  keySource         String   @default("platform")
   error             String?
   metadata          Json?
   createdAt         DateTime @default(now())

@@ -18,6 +18,7 @@ import { RetrievalService } from '../../documents/services/retrieval.service';
 import { DocumentsService } from '../../documents/services/documents.service';
 import { GenerationService } from '../../generation/services/generation.service';
 import { BudgetService } from '../../auth/services/budget.service';
+import { ModelRouterService } from '../../providers/services/model-router.service';
 import { ChatRepository } from '../repositories/chat.repository';
 import type { ChatRequestDto } from '../dto/chat-request.dto';
 import { QueryConversationsDto } from '../dto/query-conversations.dto';
@@ -28,7 +29,7 @@ import {
 } from '../prompts/assistant.prompt';
 import { textOfMessage, trimHistory } from '../utils/history';
 import { CHAT } from '../../../shared/constants/app.constants';
-import { summarizeUsage } from '../../llm/types/llm.types';
+import { summarizeUsage, type ModelRoute } from '../../llm/types/llm.types';
 import type {
   AnswerParams,
   AnswerResult,
@@ -54,6 +55,7 @@ export class ChatService {
     private readonly generations: GenerationService,
     private readonly repository: ChatRepository,
     private readonly budget: BudgetService,
+    private readonly router: ModelRouterService,
   ) {}
 
   async stream(
@@ -61,7 +63,7 @@ export class ChatService {
     dto: ChatRequestDto,
     res: Response,
   ): Promise<void> {
-    await this.budget.assertWithinBudget(userId);
+    const route = await this.routeFor(userId, dto.model);
     const conversation = await this.ensureConversation(userId, dto.id);
     const uiMessages = await validateUIMessages({ messages: dto.messages });
     const documentIds = dto.documentIds?.length ? dto.documentIds : undefined;
@@ -86,11 +88,18 @@ export class ChatService {
       name: 'chat.stream',
       traceId: conversation.id,
       userId,
-      metadata: { promptVersion: ASSISTANT_PROMPT_VERSION, documentIds },
+      metadata: {
+        promptVersion: ASSISTANT_PROMPT_VERSION,
+        documentIds,
+        modelChoice: dto.model,
+      },
+      route,
       model: 'main',
       instructions: buildAssistantInstructions({
         selectedDocuments: documentIds?.length ?? 0,
       }),
+      // The system prompt and tool definitions are identical on every turn.
+      cacheInstructions: true,
       messages: modelMessages,
       tools,
       toolApproval: CHAT_TOOL_APPROVAL,
@@ -103,14 +112,12 @@ export class ChatService {
       originalMessages: uiMessages,
       messageMetadata: ({ part }) =>
         part.type === 'start' ? { conversationId: conversation.id } : undefined,
-      onError: (error) =>
-        error instanceof Error
-          ? error.message
-          : 'The assistant failed to respond',
+      // Streamed to the browser: provider named, key problems explained, secrets masked.
+      onError: (error) => this.llm.describeError(error, route),
       onEnd: async ({ messages, isAborted }) => {
         await this.persistMessages(conversation.id, messages);
         if (!isAborted && !conversation.title) {
-          void this.generateTitle(userId, conversation.id, messages);
+          void this.generateTitle(userId, conversation.id, messages, route);
         }
       },
     });
@@ -123,7 +130,7 @@ export class ChatService {
    * the chat (image generation excluded). Used by evals and the MCP server.
    */
   async answer(params: AnswerParams): Promise<AnswerResult> {
-    await this.budget.assertWithinBudget(params.userId);
+    const route = await this.routeFor(params.userId, params.model);
 
     const documentIds = params.documentIds?.length
       ? params.documentIds
@@ -145,11 +152,16 @@ export class ChatService {
       name: 'chat.answer',
       traceId: params.traceId,
       userId: params.userId,
-      metadata: { promptVersion: ASSISTANT_PROMPT_VERSION },
+      metadata: {
+        promptVersion: ASSISTANT_PROMPT_VERSION,
+        modelChoice: params.model,
+      },
+      route,
       model: 'main',
       instructions: buildAssistantInstructions({
         selectedDocuments: documentIds?.length ?? 0,
       }),
+      cacheInstructions: true,
       prompt: params.question,
       tools: readOnlyTools,
       stopWhen: isStepCount(CHAT.MAX_STEPS),
@@ -166,7 +178,25 @@ export class ChatService {
       searches: searchOutputs.length,
       steps: result.steps.length,
       usage: summarizeUsage(result.totalUsage),
+      model: this.llm.resolveModelId('main', route),
     };
+  }
+
+  /**
+   * Validates the requested model (the agent needs tool calling) and picks the
+   * key it runs on. Only calls on the app's key count toward the daily budget.
+   */
+  private async routeFor(
+    userId: string,
+    modelChoice: string | undefined,
+  ): Promise<ModelRoute> {
+    const route = await this.router.resolve(userId, modelChoice, {
+      tools: true,
+    });
+    if (route.source === 'platform') {
+      await this.budget.assertWithinBudget(userId);
+    }
+    return route;
   }
 
   listConversations(userId: string, query: QueryConversationsDto) {
@@ -234,6 +264,7 @@ export class ChatService {
     userId: string,
     conversationId: string,
     messages: UIMessage[],
+    route: ModelRoute,
   ): Promise<void> {
     try {
       const firstUserText = textOfMessage(
@@ -245,6 +276,8 @@ export class ChatService {
         name: 'chat.title',
         traceId: conversationId,
         userId,
+        // Same key as the conversation: the provider's fast model.
+        route,
         model: 'fast',
         instructions: TITLE_INSTRUCTIONS,
         prompt: firstUserText.slice(0, 500),

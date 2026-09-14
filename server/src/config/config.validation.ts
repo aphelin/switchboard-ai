@@ -53,4 +53,8 @@ export const validationSchema = Joi.object({
   USER_DAILY_BUDGET_USD: Joi.number().min(0).default(0.5),
   // Dev convenience: the first account created takes ownership of rows created before auth existed
   AUTH_CLAIM_LEGACY_DATA: Joi.boolean().default(false),
+
+  // Encrypts users' own provider API keys (AES-256-GCM). 32 random bytes, base64: `openssl rand -base64 32`.
+  // Unset = users can only use the included (platform) models.
+  CREDENTIALS_ENCRYPTION_KEY: Joi.string().base64().allow('').optional(),
 });

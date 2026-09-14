@@ -2,6 +2,7 @@ import { Injectable, Logger } from '@nestjs/common';
 import CircuitBreaker, { type Options } from 'opossum';
 import { CIRCUIT_BREAKER_OPTIONS } from '../constants/app.constants';
 import { isUpstreamClientError } from '../errors/upstream.error';
+import { redactSecrets } from '../ai/redact-secrets';
 
 type AsyncFn<TResult> = (...args: any[]) => Promise<TResult>;
 
@@ -36,9 +37,10 @@ export class CircuitBreakerService {
     breaker.on('close', () =>
       this.logger.log(`Circuit breaker CLOSED for: ${name}`),
     );
+    // Provider error messages can echo the API key that was sent.
     breaker.on('failure', (error: unknown) =>
       this.logger.error(
-        `Circuit breaker FAILURE for: ${name} — ${error instanceof Error ? error.message : String(error)}`,
+        `Circuit breaker FAILURE for: ${name} — ${redactSecrets(error instanceof Error ? error.message : String(error))}`,
       ),
     );
 

@@ -12,6 +12,7 @@ import { LlmModule } from './modules/llm/llm.module';
 import { DocumentsModule } from './modules/documents/documents.module';
 import { ChatModule } from './modules/chat/chat.module';
 import { McpModule } from './modules/mcp/mcp.module';
+import { ProvidersModule } from './modules/providers/providers.module';
 import { HealthController } from './health.controller';
 import type { AppConfiguration } from './config/configuration.interface';
 
@@ -36,6 +37,7 @@ import type { AppConfiguration } from './config/configuration.interface';
     SseModule,
     ObservabilityModule,
     LlmModule,
+    ProvidersModule,
     GenerationModule,
     DocumentsModule,
     ChatModule,

@@ -6,8 +6,8 @@ import { GenerationRepository } from '../repositories/generation.repository';
 import { PollinationsService } from '../../pollinations/services/pollinations.service';
 import { SseService } from '../../sse/services/sse.service';
 import { LlmService } from '../../llm/services/llm.service';
-import { ModelRegistryService } from '../../llm/services/model-registry.service';
 import { PromptEnhancerService } from '../../llm/services/prompt-enhancer.service';
+import { ModelRouterService } from '../../providers/services/model-router.service';
 import { StorageService } from '../../../shared/storage/storage.service';
 import {
   GENERATION_QUEUE,
@@ -31,6 +31,8 @@ interface ResolvedPrompt {
 interface JobContext {
   generationId: string;
   userId: string;
+  /** Catalog model id for LLM calls (default: the included model). */
+  llmModel?: string;
 }
 
 @Processor(GENERATION_QUEUE)
@@ -43,7 +45,7 @@ export class GenerationProcessor extends WorkerHost {
     private readonly pollinationsService: PollinationsService,
     private readonly sseService: SseService,
     private readonly llmService: LlmService,
-    private readonly modelRegistry: ModelRegistryService,
+    private readonly modelRouter: ModelRouterService,
     private readonly promptEnhancer: PromptEnhancerService,
     private readonly storage: StorageService,
     configService: ConfigService<AppConfiguration, true>,
@@ -53,9 +55,16 @@ export class GenerationProcessor extends WorkerHost {
   }
 
   async process(job: Job<GenerationJobData>): Promise<void> {
-    const { generationId, userId, prompt, type, enhance, parameters } =
-      job.data;
-    const context: JobContext = { generationId, userId };
+    const {
+      generationId,
+      userId,
+      prompt,
+      type,
+      enhance,
+      parameters,
+      llmModel,
+    } = job.data;
+    const context: JobContext = { generationId, userId, llmModel };
 
     this.logger.log(`Processing generation ${generationId} (type: ${type})`);
 
@@ -117,10 +126,15 @@ export class GenerationProcessor extends WorkerHost {
   ): Promise<ResolvedPrompt> {
     if (!enhance || type !== GenerationType.IMAGE) return { prompt };
 
-    const enhanced = await this.promptEnhancer.enhance(prompt, {
-      traceId: context.generationId,
-      userId: context.userId,
-    });
+    const route = await this.modelRouter.resolve(
+      context.userId,
+      context.llmModel,
+    );
+    const enhanced = await this.promptEnhancer.enhance(
+      prompt,
+      { traceId: context.generationId, userId: context.userId },
+      route,
+    );
     if (!enhanced) return { prompt };
 
     this.logger.log(
@@ -190,13 +204,18 @@ export class GenerationProcessor extends WorkerHost {
   ): Promise<void> {
     const { generationId } = context;
     const textParams = parameters || {};
-    const modelSelector = textParams.model || 'main';
+    // Resolved in the worker, so a key removed while the job waited is not used.
+    const route = await this.modelRouter.resolve(
+      context.userId,
+      context.llmModel,
+    );
 
     const result = await this.llmService.generateText({
       name: 'generation.text',
       traceId: generationId,
       userId: context.userId,
-      model: modelSelector,
+      route,
+      model: 'main',
       instructions: textParams.systemPrompt,
       prompt: resolved.prompt,
       temperature: textParams.temperature,
@@ -204,20 +223,23 @@ export class GenerationProcessor extends WorkerHost {
 
     if (await this.isCancelled(generationId)) return;
 
-    const effectiveModel = this.modelRegistry.resolveModelId(modelSelector);
-
     await this.generationRepository.updateStatus(
       generationId,
       JobStatus.COMPLETED,
       {
         textResult: result.text,
         enhancedPrompt: resolved.enhancedPrompt,
-        parameters: { ...textParams, model: effectiveModel },
+        parameters: {
+          ...textParams,
+          ...(context.llmModel && { llmModel: context.llmModel }),
+          model: this.llmService.resolveModelId('main', route),
+        },
       },
     );
 
     this.sseService.emitGenerationComplete({
-      ...context,
+      generationId,
+      userId: context.userId,
       status: JobStatus.COMPLETED,
       textResult: result.text,
       enhancedPrompt: resolved.enhancedPrompt,

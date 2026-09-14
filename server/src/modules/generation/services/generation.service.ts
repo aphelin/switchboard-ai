@@ -12,6 +12,7 @@ import { filter, map, timeout } from 'rxjs/operators';
 import { GenerationRepository } from '../repositories/generation.repository';
 import { SseService } from '../../sse/services/sse.service';
 import { BudgetService } from '../../auth/services/budget.service';
+import { ModelRouterService } from '../../providers/services/model-router.service';
 import { CreateGenerationDto } from '../dto/create-generation.dto';
 import { QueryGenerationDto } from '../dto/query-generation.dto';
 import {
@@ -44,14 +45,15 @@ export class GenerationService {
     private readonly generationRepository: GenerationRepository,
     private readonly sseService: SseService,
     private readonly budget: BudgetService,
+    private readonly router: ModelRouterService,
     @InjectQueue(GENERATION_QUEUE) private readonly generationQueue: Queue,
   ) {}
 
   async create(userId: string, dto: CreateGenerationDto): Promise<Generation> {
-    // Text generation and prompt enhancement are LLM calls that count toward the daily budget.
-    if (dto.type === GenerationType.TEXT || dto.enhance) {
-      await this.budget.assertWithinBudget(userId);
-    }
+    // Text generation and prompt enhancement are LLM calls; the model is only relevant for those.
+    const usesLlm = dto.type === GenerationType.TEXT || !!dto.enhance;
+    const llmModel = usesLlm ? dto.llmModel : undefined;
+    if (usesLlm) await this.assertModelUsable(userId, llmModel);
 
     const priority = dto.priority ?? JobPriority.NORMAL;
 
@@ -60,7 +62,11 @@ export class GenerationService {
       prompt: dto.prompt,
       type: dto.type,
       priority,
-      parameters: dto.parameters as Record<string, unknown>,
+      // The model choice is stored so a retry runs on the same model.
+      parameters: {
+        ...dto.parameters,
+        ...(llmModel && { llmModel }),
+      } as Record<string, unknown>,
     });
 
     const jobData: GenerationJobData = {
@@ -69,6 +75,7 @@ export class GenerationService {
       prompt: dto.prompt,
       type: dto.type,
       enhance: dto.enhance ?? false,
+      llmModel,
       parameters: dto.parameters,
     };
 
@@ -162,8 +169,10 @@ export class GenerationService {
       );
     }
 
+    const llmModel = (generation.parameters as { llmModel?: string } | null)
+      ?.llmModel;
     if (generation.type === GenerationType.TEXT) {
-      await this.budget.assertWithinBudget(userId);
+      await this.assertModelUsable(userId, llmModel);
     }
 
     const updated = await this.generationRepository.updateStatus(
@@ -177,6 +186,7 @@ export class GenerationService {
       prompt: generation.prompt,
       type: generation.type,
       enhance: false,
+      llmModel,
       parameters: generation.parameters as
         | ImageParameters
         | TextParameters
@@ -230,5 +240,21 @@ export class GenerationService {
     });
     this.logger.log(`Generation ${id} cancelled`);
     return updated;
+  }
+
+  /**
+   * Fails the request before anything is queued when the model is unknown or
+   * needs a key the user hasn't added. The worker resolves the model again, so
+   * a key removed while the job waits is not used. Only calls on the app's key
+   * count toward the daily budget.
+   */
+  private async assertModelUsable(
+    userId: string,
+    llmModel: string | undefined,
+  ): Promise<void> {
+    const route = await this.router.resolve(userId, llmModel);
+    if (route.source === 'platform') {
+      await this.budget.assertWithinBudget(userId);
+    }
   }
 }

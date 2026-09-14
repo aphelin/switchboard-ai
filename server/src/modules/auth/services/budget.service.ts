@@ -4,6 +4,7 @@ import { PrismaService } from '../../../prisma/prisma.service';
 import { BudgetExceededException } from '../errors/budget-exceeded.exception';
 import { isOverBudget, startOfUtcDay } from '../utils/budget';
 import type { AppConfiguration } from '../../../config/configuration.interface';
+import type { KeySource } from '../../llm/types/llm.types';
 
 /**
  * Per-user daily AI spending limit, computed from the LlmCall traces.
@@ -25,12 +26,14 @@ export class BudgetService {
     }).dailyBudgetUsd;
   }
 
-  async spentTodayUsd(userId: string): Promise<number> {
-    const result = await this.prisma.llmCall.aggregate({
-      where: { userId, createdAt: { gte: startOfUtcDay() } },
-      _sum: { costUsd: true },
-    });
-    return result._sum.costUsd ?? 0;
+  /** Today's spend on the app's provider key. Calls on the user's own keys are billed to them and never count. */
+  spentTodayUsd(userId: string): Promise<number> {
+    return this.sumToday(userId, 'platform');
+  }
+
+  /** Estimated cost of today's calls on the user's own provider keys (informational only). */
+  ownKeysSpentTodayUsd(userId: string): Promise<number> {
+    return this.sumToday(userId, 'user');
   }
 
   async assertWithinBudget(userId: string): Promise<void> {
@@ -39,5 +42,16 @@ export class BudgetService {
     if (isOverBudget(spent, this.dailyBudgetUsd)) {
       throw new BudgetExceededException(this.dailyBudgetUsd);
     }
+  }
+
+  private async sumToday(
+    userId: string,
+    keySource: KeySource,
+  ): Promise<number> {
+    const result = await this.prisma.llmCall.aggregate({
+      where: { userId, keySource, createdAt: { gte: startOfUtcDay() } },
+      _sum: { costUsd: true },
+    });
+    return result._sum.costUsd ?? 0;
   }
 }

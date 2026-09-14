@@ -1,5 +1,9 @@
 import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
 import { ModelRegistryService } from './model-registry.service';
+import {
+  BYOK_MODELS,
+  type ModelPricingPerMillion,
+} from '../catalog/model-catalog';
 import type { UsageSummary } from '../types/llm.types';
 
 /** USD per single token. */
@@ -44,10 +48,12 @@ export class PricingService implements OnModuleInit {
 
   constructor(private readonly registry: ModelRegistryService) {
     for (const [model, price] of Object.entries(DEFAULT_PRICING_PER_MILLION)) {
-      this.pricing.set(model, {
-        input: price.input / PER_MILLION,
-        output: price.output / PER_MILLION,
-      });
+      this.setPerMillion(model, price);
+    }
+    // Models on users' own keys are priced from the catalog, keyed by catalog id
+    // ("anthropic:claude-sonnet-5"), so they never collide with platform model ids.
+    for (const model of BYOK_MODELS) {
+      if (model.pricing) this.setPerMillion(model.id, model.pricing);
     }
     this.loadOverrides(registry.config.pricingJson);
   }
@@ -94,22 +100,23 @@ export class PricingService implements OnModuleInit {
     return undefined;
   }
 
+  private setPerMillion(model: string, price: ModelPricingPerMillion): void {
+    this.pricing.set(model, {
+      input: price.input / PER_MILLION,
+      output: price.output / PER_MILLION,
+      cachedInput:
+        price.cachedInput !== undefined
+          ? price.cachedInput / PER_MILLION
+          : undefined,
+    });
+  }
+
   private loadOverrides(json: string | undefined): void {
     if (!json) return;
     try {
-      const parsed = JSON.parse(json) as Record<
-        string,
-        { input: number; output: number; cachedInput?: number }
-      >;
+      const parsed = JSON.parse(json) as Record<string, ModelPricingPerMillion>;
       for (const [model, price] of Object.entries(parsed)) {
-        this.pricing.set(model, {
-          input: price.input / PER_MILLION,
-          output: price.output / PER_MILLION,
-          cachedInput:
-            price.cachedInput !== undefined
-              ? price.cachedInput / PER_MILLION
-              : undefined,
-        });
+        this.setPerMillion(model, price);
       }
     } catch (error) {
       this.logger.warn(`Ignoring invalid LLM_PRICING_JSON: ${String(error)}`);

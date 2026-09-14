@@ -5,6 +5,7 @@ import {
   Output,
   NoObjectGeneratedError,
   type GenerateTextResult,
+  type LanguageModel,
   type ModelMessage,
   type StopCondition,
   type StreamTextResult,
@@ -22,17 +23,33 @@ import {
   isUpstreamClientError,
   ServiceUnavailableError,
   toUpstreamError,
+  upstreamStatusOf,
+  UpstreamError,
 } from '../../../shared/errors/upstream.error';
+import { redactSecrets } from '../../../shared/ai/redact-secrets';
 import { LLM_CALL_TIMEOUT_MS } from '../../../shared/constants/app.constants';
 import {
+  BYOK_PROVIDER_INFO,
+  type ByokProvider,
+  type ProviderOptions,
+} from '../catalog/model-catalog';
+import {
+  PLATFORM_ROUTE,
   summarizeUsage,
+  type KeySource,
   type LlmCallContext,
+  type ModelRoute,
   type ModelSelector,
+  type ModelTier,
+  type PlatformRoute,
   type ProviderSlot,
 } from '../types/llm.types';
 
 export type TextResult = GenerateTextResult<ToolSet, any, any>;
 export type StreamResult = StreamTextResult<ToolSet, any, any>;
+
+type Breaker = CircuitBreaker<any[], unknown>;
+type InstructionsInput = Parameters<typeof generateText>[0]['instructions'];
 
 /** The SDK takes either `prompt` or `messages`, never both. */
 const promptInput = (options: {
@@ -43,9 +60,16 @@ const promptInput = (options: {
     ? { messages: options.messages }
     : { prompt: options.prompt ?? '' };
 
+/** Anthropic prompt caching: a breakpoint on the system message caches the tools and instructions before it. */
+const ANTHROPIC_CACHE_BREAKPOINT: ProviderOptions = {
+  anthropic: { cacheControl: { type: 'ephemeral' } },
+};
+
 export interface GenerateTextOptions extends LlmCallContext {
   model?: ModelSelector;
   instructions?: string;
+  /** Mark the instructions as a prompt-cache breakpoint on providers that need it (Anthropic). */
+  cacheInstructions?: boolean;
   prompt?: string;
   messages?: ModelMessage[];
   temperature?: number;
@@ -68,31 +92,49 @@ export interface StreamTextOptions extends GenerateTextOptions {
   toolApproval?: Record<string, ToolApprovalStatus>;
 }
 
+/** One concrete place a call can run: provider, model, the breaker guarding it and who pays. */
+interface CallTarget {
+  provider: string;
+  /** Name used in error messages ("LLM" for the platform provider, the vendor for user keys). */
+  service: string;
+  modelId: string;
+  /** Key into the price table; catalog models are qualified by provider. */
+  pricingKey: string;
+  model: LanguageModel;
+  keySource: KeySource;
+  breaker: Breaker;
+  slot?: ProviderSlot;
+  providerOptions?: ProviderOptions;
+  supportsCacheBreakpoint: boolean;
+}
+
 /**
  * Single entry point for every model call. Adds what raw SDK calls lack in
  * production: per-provider circuit breaker, optional provider fallback,
  * schema-validated structured output with one repair attempt, and a trace
- * record (tokens, cost, latency) for each call.
+ * record (tokens, cost, latency, who pays) for each call.
+ *
+ * A call runs on the platform provider (the app's key, with fallback) or on a
+ * provider with the user's own key (no fallback: a request is never silently
+ * moved to another vendor or onto the app's bill).
  */
 @Injectable()
 export class LlmService {
   private readonly logger = new Logger(LlmService.name);
-  private readonly breakers = new Map<
-    ProviderSlot,
-    CircuitBreaker<any[], unknown>
-  >();
+  private readonly platformBreakers = new Map<ProviderSlot, Breaker>();
+  private readonly userKeyBreakers = new Map<ByokProvider, Breaker>();
 
   constructor(
     private readonly registry: ModelRegistryService,
     private readonly pricing: PricingService,
     private readonly trace: TraceService,
-    circuitBreakerService: CircuitBreakerService,
+    private readonly circuitBreakerService: CircuitBreakerService,
   ) {
     const slots: ProviderSlot[] = registry.hasFallback
       ? ['primary', 'fallback']
       : ['primary'];
     for (const slot of slots) {
-      this.breakers.set(
+      this.platformBreakers.set(
         slot,
         circuitBreakerService.create((run: () => Promise<unknown>) => run(), {
           name: `llm:${registry.providerConfig(slot).name}`,
@@ -102,27 +144,43 @@ export class LlmService {
     }
   }
 
+  /** The provider model id a tier resolves to on a route (to record what actually ran). */
+  resolveModelId(tier: ModelTier, route: ModelRoute = PLATFORM_ROUTE): string {
+    if (route.source === 'user') {
+      return (tier === 'fast' ? route.fast : route.main).modelId;
+    }
+    return this.registry.resolveModelId(this.platformSelector(tier, route));
+  }
+
+  /** A client-safe message for a failed call: provider named, key rejections explained, secrets masked. */
+  describeError(error: unknown, route: ModelRoute = PLATFORM_ROUTE): string {
+    return this.normalizeError(error, {
+      service:
+        route.source === 'user'
+          ? BYOK_PROVIDER_INFO[route.provider].label
+          : 'LLM',
+      keySource: route.source,
+    }).message;
+  }
+
   async generateText(options: GenerateTextOptions): Promise<TextResult> {
-    return this.withFallback(options, async (slot) => {
-      const modelId = this.registry.resolveModelId(
-        options.model ?? 'main',
-        slot,
-      );
+    return this.withFallback(options, async (target) => {
       const startedAt = Date.now();
       try {
-        const result = await this.fire(slot, () =>
+        const result = await this.fire(target, () =>
           generateText({
-            model: this.registry.languageModel(options.model ?? 'main', slot),
-            instructions: options.instructions,
+            model: target.model,
+            instructions: this.instructionsFor(target, options),
             ...promptInput(options),
             temperature: options.temperature,
             maxOutputTokens: options.maxOutputTokens,
             tools: options.tools,
             stopWhen: options.stopWhen,
             abortSignal: options.abortSignal,
+            providerOptions: target.providerOptions,
           }),
         );
-        await this.recordSuccess(options, slot, modelId, startedAt, {
+        await this.recordSuccess(options, target, startedAt, {
           usage: result.totalUsage,
           responseModel: result.response?.modelId,
           finishReason: result.finishReason,
@@ -130,7 +188,7 @@ export class LlmService {
         });
         return result;
       } catch (error) {
-        await this.recordFailure(options, slot, modelId, startedAt, error);
+        await this.recordFailure(options, target, startedAt, error);
         throw error;
       }
     });
@@ -146,23 +204,20 @@ export class LlmService {
     options: GenerateObjectOptions,
   ): Promise<T> {
     const run = (prompt: string, attempt: number) =>
-      this.withFallback(options, async (slot) => {
-        const modelId = this.registry.resolveModelId(
-          options.model ?? 'main',
-          slot,
-        );
+      this.withFallback(options, async (target) => {
         const startedAt = Date.now();
         try {
-          const result = await this.fire(slot, () =>
+          const result = await this.fire(target, () =>
             generateText({
-              model: this.registry.languageModel(options.model ?? 'main', slot),
+              model: target.model,
               output: Output.object({ schema }),
               instructions: options.instructions,
               prompt,
               temperature: options.temperature,
+              providerOptions: target.providerOptions,
             }),
           );
-          await this.recordSuccess(options, slot, modelId, startedAt, {
+          await this.recordSuccess(options, target, startedAt, {
             usage: result.totalUsage,
             responseModel: result.response?.modelId,
             finishReason: result.finishReason,
@@ -170,7 +225,7 @@ export class LlmService {
           });
           return result.output;
         } catch (error) {
-          await this.recordFailure(options, slot, modelId, startedAt, error, {
+          await this.recordFailure(options, target, startedAt, error, {
             attempt,
           });
           throw error;
@@ -203,19 +258,18 @@ export class LlmService {
    * call is traced when the stream ends.
    */
   streamText(options: StreamTextOptions): StreamResult {
-    const slot: ProviderSlot = 'primary';
-    if (this.breakers.get(slot)?.opened) {
+    const [target] = this.targetsFor(options);
+    if (target.breaker.opened) {
       throw new ServiceUnavailableError(
-        'LLM provider is temporarily unavailable (circuit open)',
+        `${target.service} provider is temporarily unavailable (circuit open)`,
       );
     }
 
-    const modelId = this.registry.resolveModelId(options.model ?? 'main', slot);
     const startedAt = Date.now();
 
     return streamText({
-      model: this.registry.languageModel(options.model ?? 'main', slot),
-      instructions: options.instructions,
+      model: target.model,
+      instructions: this.instructionsFor(target, options),
       ...promptInput(options),
       temperature: options.temperature,
       maxOutputTokens: options.maxOutputTokens,
@@ -223,8 +277,9 @@ export class LlmService {
       toolApproval: options.toolApproval,
       stopWhen: options.stopWhen,
       abortSignal: options.abortSignal,
+      providerOptions: target.providerOptions,
       onEnd: async (event) => {
-        await this.recordSuccess(options, slot, modelId, startedAt, {
+        await this.recordSuccess(options, target, startedAt, {
           usage: event.totalUsage,
           responseModel: event.response?.modelId,
           finishReason: event.finishReason,
@@ -232,54 +287,157 @@ export class LlmService {
         });
       },
       onError: async ({ error }) => {
-        await this.recordFailure(options, slot, modelId, startedAt, error);
+        await this.recordFailure(options, target, startedAt, error);
       },
     });
   }
 
-  private fire<T>(slot: ProviderSlot, run: () => Promise<T>): Promise<T> {
-    const breaker = this.breakers.get(slot);
-    if (!breaker) throw new Error(`No circuit breaker for ${slot} provider`);
-    return breaker.fire(run) as Promise<T>;
+  /** Primary then fallback for the platform provider; exactly one target for a user's own key. */
+  private targetsFor(
+    options: LlmCallContext & { model?: ModelSelector },
+  ): CallTarget[] {
+    const selector = options.model ?? 'main';
+    const route = options.route ?? PLATFORM_ROUTE;
+
+    if (route.source === 'user') {
+      const entry = selector === 'fast' ? route.fast : route.main;
+      return [
+        {
+          provider: route.provider,
+          service: BYOK_PROVIDER_INFO[route.provider].label,
+          modelId: entry.modelId,
+          pricingKey: entry.id,
+          model: route.languageModel(entry.modelId),
+          keySource: 'user',
+          breaker: this.userKeyBreaker(route.provider),
+          providerOptions: entry.providerOptions,
+          supportsCacheBreakpoint: route.provider === 'anthropic',
+        },
+      ];
+    }
+
+    const platformSelector = this.platformSelector(selector, route);
+    return [...this.platformBreakers].map(([slot, breaker]) => {
+      const modelId = this.registry.resolveModelId(platformSelector, slot);
+      return {
+        provider: this.registry.providerConfig(slot).name,
+        service: 'LLM',
+        modelId,
+        pricingKey: modelId,
+        model: this.registry.languageModel(platformSelector, slot),
+        keySource: 'platform',
+        breaker,
+        slot,
+        supportsCacheBreakpoint: false,
+      };
+    });
   }
 
-  /** Runs on the primary provider; on an outage (not a 4xx) retries once on the fallback provider. */
+  private platformSelector(
+    selector: ModelSelector,
+    route: PlatformRoute,
+  ): ModelSelector {
+    return selector === 'main' && route.mainModelId
+      ? route.mainModelId
+      : selector;
+  }
+
+  /**
+   * One breaker per provider for calls on users' own keys. A rate limit (429) on
+   * one user's key says nothing about the provider's health, so unlike on the
+   * platform breakers it doesn't count; outages (5xx, timeouts) still do.
+   */
+  private userKeyBreaker(provider: ByokProvider): Breaker {
+    let breaker = this.userKeyBreakers.get(provider);
+    if (!breaker) {
+      breaker = this.circuitBreakerService.create(
+        (run: () => Promise<unknown>) => run(),
+        {
+          name: `llm:user-key:${provider}`,
+          timeout: LLM_CALL_TIMEOUT_MS,
+          errorFilter: (error: unknown) =>
+            isUpstreamClientError(error) || upstreamStatusOf(error) === 429,
+        },
+      );
+      this.userKeyBreakers.set(provider, breaker);
+    }
+    return breaker;
+  }
+
+  private instructionsFor(
+    target: CallTarget,
+    options: { instructions?: string; cacheInstructions?: boolean },
+  ): InstructionsInput {
+    if (
+      !options.instructions ||
+      !options.cacheInstructions ||
+      !target.supportsCacheBreakpoint
+    ) {
+      return options.instructions;
+    }
+    return {
+      role: 'system',
+      content: options.instructions,
+      providerOptions: ANTHROPIC_CACHE_BREAKPOINT,
+    };
+  }
+
+  private fire<T>(target: CallTarget, run: () => Promise<T>): Promise<T> {
+    return target.breaker.fire(run) as Promise<T>;
+  }
+
+  /** Runs on the first target; on an outage (not a 4xx) retries once on the fallback target, if there is one. */
   private async withFallback<T>(
-    context: LlmCallContext,
-    run: (slot: ProviderSlot) => Promise<T>,
+    context: LlmCallContext & { model?: ModelSelector },
+    run: (target: CallTarget) => Promise<T>,
   ): Promise<T> {
+    const [primary, fallback] = this.targetsFor(context);
     try {
-      return await run('primary');
+      return await run(primary);
     } catch (error) {
-      const canFallback =
-        this.registry.hasFallback && !isUpstreamClientError(error);
-      if (!canFallback) throw this.normalizeError(error);
+      if (!fallback || isUpstreamClientError(error)) {
+        throw this.normalizeError(error, primary);
+      }
 
       this.logger.warn(
-        `Primary LLM provider failed for "${context.name}" (${error instanceof Error ? error.message : String(error)}), trying fallback provider`,
+        `Primary LLM provider failed for "${context.name}" (${redactSecrets(error instanceof Error ? error.message : String(error))}), trying fallback provider`,
       );
       try {
-        return await run('fallback');
+        return await run(fallback);
       } catch (fallbackError) {
-        throw this.normalizeError(fallbackError);
+        throw this.normalizeError(fallbackError, fallback);
       }
     }
   }
 
-  private normalizeError(error: unknown): Error {
+  private normalizeError(
+    error: unknown,
+    target: Pick<CallTarget, 'service' | 'keySource'>,
+  ): Error {
     if (isCircuitOpenError(error)) {
       return new ServiceUnavailableError(
-        'LLM provider is temporarily unavailable (circuit open)',
+        `${target.service} provider is temporarily unavailable (circuit open)`,
       );
     }
     if (NoObjectGeneratedError.isInstance(error)) return error;
-    return toUpstreamError('LLM', error);
+
+    const upstream = toUpstreamError(target.service, error);
+    if (
+      target.keySource === 'user' &&
+      (upstream.status === 401 || upstream.status === 403)
+    ) {
+      return new UpstreamError(
+        target.service,
+        upstream.status,
+        `rejected your API key (HTTP ${upstream.status}). Update or remove it under AI providers.`,
+      );
+    }
+    return upstream;
   }
 
   private async recordSuccess(
     context: LlmCallContext,
-    slot: ProviderSlot,
-    modelId: string,
+    target: CallTarget,
     startedAt: number,
     details: {
       usage: Parameters<typeof summarizeUsage>[0];
@@ -294,10 +452,15 @@ export class LlmService {
       name: context.name,
       traceId: context.traceId,
       userId: context.userId,
-      provider: this.registry.providerConfig(slot).name,
-      model: modelId,
+      provider: target.provider,
+      model: target.modelId,
+      keySource: target.keySource,
       ...usage,
-      costUsd: this.pricing.estimateCost(modelId, details.responseModel, usage),
+      costUsd: this.pricing.estimateCost(
+        target.pricingKey,
+        details.responseModel,
+        usage,
+      ),
       latencyMs: Date.now() - startedAt,
       status: 'ok',
       metadata: {
@@ -306,15 +469,14 @@ export class LlmService {
         finishReason: details.finishReason,
         steps: details.steps,
         attempt: details.attempt,
-        slot,
+        slot: target.slot,
       },
     });
   }
 
   private async recordFailure(
     context: LlmCallContext,
-    slot: ProviderSlot,
-    modelId: string,
+    target: CallTarget,
     startedAt: number,
     error: unknown,
     extra?: Record<string, unknown>,
@@ -323,12 +485,15 @@ export class LlmService {
       name: context.name,
       traceId: context.traceId,
       userId: context.userId,
-      provider: this.registry.providerConfig(slot).name,
-      model: modelId,
+      provider: target.provider,
+      model: target.modelId,
+      keySource: target.keySource,
       latencyMs: Date.now() - startedAt,
       status: 'error',
-      error: error instanceof Error ? error.message : String(error),
-      metadata: { ...context.metadata, ...extra, slot },
+      error: redactSecrets(
+        error instanceof Error ? error.message : String(error),
+      ),
+      metadata: { ...context.metadata, ...extra, slot: target.slot },
     });
   }
 }

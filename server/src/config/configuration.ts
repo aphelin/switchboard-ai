@@ -58,6 +58,9 @@ export const configuration = (): AppConfiguration => {
         credentials: true,
       },
     },
+    credentials: {
+      encryptionKey: process.env.CREDENTIALS_ENCRYPTION_KEY || null,
+    },
     database: {
       url: process.env.DATABASE_URL!,
     },

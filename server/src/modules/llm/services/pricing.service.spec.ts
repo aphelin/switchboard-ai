@@ -106,6 +106,18 @@ describe('PricingService.estimateCost', () => {
     ).toBeCloseTo(10, 8);
   });
 
+  it('prices models on user keys from the catalog, including cache reads', () => {
+    const service = makeService();
+    // claude-sonnet-5: $2 input / $10 output / $0.20 cached input per 1M tokens
+    expect(
+      service.estimateCost('anthropic:claude-sonnet-5', 'claude-sonnet-5', {
+        inputTokens: MILLION,
+        cachedInputTokens: MILLION / 2,
+        outputTokens: MILLION,
+      }),
+    ).toBeCloseTo(0.5 * 2 + 0.5 * 0.2 + 10, 8);
+  });
+
   it('treats missing usage numbers as zero', () => {
     const service = makeService();
     expect(service.estimateCost('gpt-4o-mini', undefined, {})).toBe(0);

@@ -1,7 +1,7 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { z } from 'zod';
 import { LlmService } from './llm.service';
-import type { TraceContext } from '../types/llm.types';
+import type { ModelRoute, TraceContext } from '../types/llm.types';
 
 export const EnhancedPromptSchema = z.object({
   enhancedPrompt: z
@@ -46,12 +46,14 @@ export class PromptEnhancerService {
   async enhance(
     prompt: string,
     context: TraceContext = {},
+    route?: ModelRoute,
   ): Promise<EnhancedPrompt | null> {
     try {
       return await this.llm.generateObject(EnhancedPromptSchema, {
         name: 'prompt.enhance',
         traceId: context.traceId,
         userId: context.userId,
+        route,
         model: 'fast',
         instructions: INSTRUCTIONS,
         prompt: `Original prompt: "${prompt}"`,

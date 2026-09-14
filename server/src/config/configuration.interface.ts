@@ -68,8 +68,14 @@ export interface AuthConfig {
   claimLegacyData: boolean;
 }
 
+export interface CredentialsConfig {
+  /** Base64 AES-256 key for users' provider API keys; null disables bring-your-own-key. */
+  encryptionKey: string | null;
+}
+
 export interface AppConfiguration {
   app: AppConfig;
+  credentials: CredentialsConfig;
   database: DatabaseConfig;
   redis: RedisConfig;
   pollinations: PollinationsConfig;

@@ -7,15 +7,19 @@ import type { AuthUser } from '../types/auth.types';
 export class MeController {
   constructor(private readonly budget: BudgetService) {}
 
-  /** The signed-in user and today's AI spend against their budget. */
+  /** The signed-in user and today's AI spend: on the app's key (against the budget) and on their own keys. */
   @Get()
   async me(@CurrentUser() user: AuthUser) {
-    const spent = await this.budget.spentTodayUsd(user.id);
+    const [spent, ownKeysSpent] = await Promise.all([
+      this.budget.spentTodayUsd(user.id),
+      this.budget.ownKeysSpentTodayUsd(user.id),
+    ]);
     return {
       user,
       usage: {
         spentTodayUsd: Number(spent.toFixed(6)),
         dailyBudgetUsd: this.budget.dailyBudgetUsd,
+        ownKeysSpentTodayUsd: Number(ownKeysSpent.toFixed(6)),
       },
     };
   }

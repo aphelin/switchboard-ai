@@ -1,6 +1,7 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { PrismaService } from '../../../prisma/prisma.service';
 import { Prisma } from 'generated/prisma/client';
+import type { KeySource } from '../../llm/types/llm.types';
 
 export interface RecordLlmCallInput {
   name: string;
@@ -9,6 +10,8 @@ export interface RecordLlmCallInput {
   userId?: string;
   provider: string;
   model: string;
+  /** "user" when the call ran on the user's own provider key (excluded from the daily budget). */
+  keySource?: KeySource;
   inputTokens?: number;
   outputTokens?: number;
   cachedInputTokens?: number;

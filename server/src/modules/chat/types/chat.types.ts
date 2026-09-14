@@ -38,6 +38,8 @@ export interface AnswerParams {
   question: string;
   documentIds?: string[];
   traceId?: string;
+  /** Catalog model id (default: the included model). */
+  model?: string;
 }
 
 export interface AnswerResult {
@@ -46,4 +48,6 @@ export interface AnswerResult {
   searches: number;
   steps: number;
   usage: UsageSummary;
+  /** Provider model id that answered. */
+  model: string;
 }
