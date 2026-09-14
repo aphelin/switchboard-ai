@@ -90,6 +90,8 @@ jobs:
       POLLINATIONS_API_KEY: ${{ secrets.POLLINATIONS_API_KEY || 'ci-no-key' }}
       EVAL_SKIP_GENERATION: ${{ secrets.POLLINATIONS_API_KEY == '' && '1' || '' }}
       STORAGE_DIR: ./storage
+      # Throwaway value: CI never serves real users, but the config requires a 32+ char secret.
+      BETTER_AUTH_SECRET: ci-only-secret-not-used-for-real-sessions
       TRANSFORMERS_CACHE_DIR: ./.cache/transformers
     steps:
       - uses: actions/checkout@v4

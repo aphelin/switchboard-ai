@@ -33,6 +33,7 @@ Server modules (`server/src/modules`):
 | `generation` | The original async image/text pipeline (BullMQ + SSE), now with local image storage and structured prompt enhancement. |
 | `mcp` | Exposes the toolkit as an MCP server so external agents (Claude Code, Claude Desktop) can use it. |
 | `sse` | In-process event bus + Server-Sent Events endpoints (generation and document status). |
+| `auth` | Better Auth (sessions, API keys), global `AuthGuard`, `@CurrentUser()`, per-user rate limits, daily AI budget, legacy-data claim. |
 
 Shared building blocks (`server/src/shared`): circuit breaker, local object storage, upstream-error normalisation, prompt-injection scanner, Reciprocal Rank Fusion, Zod validation pipe.
 
@@ -103,7 +104,7 @@ Search modes (`hybrid` | `vector` | `keyword`) are exposed on `POST /api/documen
 
 - Why hybrid search and not vector-only? (Give the `vaultctl freeze` example: keyword rank 1, vector alone was fine too, but identifiers and codes often are not.)
 - How did you choose chunk size? (Start at ~200 tokens with overlap; measure hit@k and answer faithfulness with the eval set; tune from there.)
-- How do you handle access control in RAG? (Not implemented: documents have no owner. The design point is that filtering must happen *inside* the retrieval query, e.g. `WHERE owner_id = $user`, never after the fact.)
+- How do you handle access control in RAG? (Every document has an owner and both retrievers filter by `d."userId"` inside the SQL. Filtering after retrieval would let other users' passages take the top-k slots, and one bug there leaks data straight into an answer.)
 - What breaks with PDFs? (Tables, multi-column layouts, scanned pages: `unpdf` covers text PDFs; production would add layout-aware parsing or OCR.)
 - What is "agentic RAG" here? (The model decides when to search and can search again with a rephrased query, instead of a fixed retrieve-then-answer step.)
 
@@ -136,9 +137,9 @@ Search modes (`hybrid` | `vector` | `keyword`) are exposed on `POST /api/documen
 
 | Layer | Mechanism |
 |---|---|
-| Input | Request validation (Zod), message limits, rate limiting (per second/minute/hour, Redis-backed). |
+| Input | Authentication (session or API key), request validation (Zod), message limits, per-user rate limiting (Redis-backed), daily AI budget. |
 | Retrieval | Injection scanner flags suspicious passages; the prompt tells the model how to treat them. |
-| Tools | Tools can only do what the API already allows, with the same validation; the image tool needs human approval; the step cap bounds loops; the non-streaming `answer()` used by evals/MCP excludes the image tool entirely. |
+| Tools | Tools can only do what the API already allows, with the same validation; the image tool needs human approval; the step cap bounds loops; the non-streaming `answer()` used by evals/MCP excludes the image tool entirely; the user id is captured from the session, never a tool argument. |
 | Output | Structured outputs are schema-validated; free-text answers are evaluated (see §6). |
 | Provider | Circuit breaker, timeouts, fallback. |
 
@@ -184,11 +185,57 @@ Questions to be ready for: why an LLM judge and what are its failure modes (bias
 
 ## 8. MCP server (`modules/mcp`)
 
-The toolkit is also exposed as an MCP server over Streamable HTTP (`POST /api/mcp`), stateless (a fresh server + transport per request), so any MCP client can search the documents, ask grounded questions or generate images. The tools wrap the same services as the chat agent, which is the important design point: **one set of capabilities, several front-ends** (web UI, chat agent, external agents).
+The toolkit is also exposed as an MCP server over Streamable HTTP (`POST /api/mcp`), authenticated with a per-user API key, stateless (a fresh server + transport per request), so any MCP client can search the documents, ask grounded questions or generate images. The tools wrap the same services as the chat agent, which is the important design point: **one set of capabilities, several front-ends** (web UI, chat agent, external agents).
 
 ---
 
-## 9. Decisions and trade-offs (short list)
+## 9. Authentication and multi-tenancy (`modules/auth`)
+
+### What it does
+
+- **Better Auth runs inside the API** at `/api/auth/*`. It is mounted on Express before the JSON body parser (it reads the raw body) and stores users, sessions, accounts and API keys in Postgres through the Prisma adapter. Auth lives in the API rather than in Next.js because MCP clients never go through the frontend.
+- **Database sessions, no JWTs.** The browser holds an httpOnly cookie that references a `session` row. Sessions last 7 days and are extended when used (at most once a day). Sign-out deletes the row, so revocation is immediate. There are no refresh tokens: they exist to make up for JWTs that cannot be revoked.
+- **One global guard.** `AuthGuard` protects every route unless it is marked `@Public()` (only `/api/health`). It calls Better Auth's `getSession`, which accepts the session cookie or an API key (`x-api-key`, or `Authorization: Bearer mat_…`). Controllers get the user from `@CurrentUser()`.
+- **API keys for MCP.** Created in the UI and shown once, stored hashed, prefixed `mat_` so leaked keys are easy to spot, revocable one by one.
+
+### Where the user id is enforced
+
+| Layer | Enforcement |
+|---|---|
+| Controllers | `@CurrentUser()`; services always take `userId` as their first argument. |
+| Repositories | Every list filters by `userId`; lookups by id use `findFirst({ id, userId })`, so another user's id returns 404 (existence can't be probed). |
+| Retrieval | The vector query and the keyword query both filter `d."userId"` inside SQL. |
+| Agent tools | The user id is captured when the tools are built for a request. It is not a tool input, so injected text cannot ask to "search as user X". |
+| Conversations | Ids are client-generated, so posting into an existing conversation owned by someone else returns 403. |
+| Live updates (SSE) | Events carry the owner id internally; each stream only delivers the subscriber's events, and the id is stripped before sending. |
+| Images | `/api/generations/:id/image` checks ownership; `<img>` requests carry the cookie (same-site); `Cache-Control: private`. |
+| Traces and budget | `LlmCall.userId` scopes the Traces page and the daily spend. |
+
+### Cost control
+
+Sign-up is open, so the provider balance is protected per user. Before a costly call (chat turn, RAG answer, text generation, prompt enhancement) `BudgetService` sums today's `LlmCall.costUsd` for the user and returns **429 "Budget Exceeded"** once `USER_DAILY_BUDGET_USD` is reached. It is a soft cap: requests already in flight can overshoot by their own cost; a hard cap would need reservations. Rate limits are tracked per user (`UserThrottlerGuard` runs after `AuthGuard`) instead of per IP.
+
+### Migrating existing data (expand/contract)
+
+Rows created before auth have no owner, so `userId` is nullable for now (expand). With `AUTH_CLAIM_LEGACY_DATA=true` the first account created takes them over. This was rehearsed on a copy of the dev database before touching it. The contract step is to make `userId` required once no unowned rows remain; the application never writes a row without an owner.
+
+### How it is tested
+
+- `npm run test:auth`: two users against a running API, 29 checks. Protected routes return 401. Bob gets 404 or empty results for Alice's documents, chunks, searches (even when naming her document id) and traces. API keys work in both headers and bad keys get 401. Bob gets 403 posting into Alice's conversation. Sign-out invalidates the session.
+- Unit tests for API-key extraction and budget math; `npm run mcp:smoke` authenticates with an API key.
+
+### Questions to be ready for
+
+- Why Better Auth and not NextAuth/Auth.js? (Auth.js is in maintenance mode and its maintainers point new projects to Better Auth; auth also has to live in the API because MCP clients never touch Next.js.)
+- Why no refresh tokens? (Database sessions are revoked instantly by deleting a row. JWT + refresh makes sense when many services must verify tokens without a shared database.)
+- Why 404 instead of 403 for another user's document? (It doesn't confirm the id exists. Conversation writes are the exception, because a silent 404 on POST would look like a bug.)
+- Where would a missing `userId` filter hurt most? (Retrieval: the model would quote another user's data inside a normal-looking answer.)
+- How does the agent know who the user is? (From the session, captured when the tools are built; never from a model-controlled argument.)
+- Cookies across ports and domains? (`localhost:3000` → `localhost:4000` is same-site. In production use subdomains of one domain, or proxy the API through the frontend domain, because Safari blocks third-party cookies.)
+
+---
+
+## 10. Decisions and trade-offs (short list)
 
 | Decision | Alternative | Why this one |
 |---|---|---|
@@ -200,7 +247,10 @@ The toolkit is also exposed as an MCP server over Streamable HTTP (`POST /api/mc
 | Custom `LlmCall` tracing | Langfuse from day one | No extra services to run; the schema maps 1:1 to a hosted tracer later. |
 | `prisma db push` + startup DDL for indexes | Prisma migrations | Kept the project's existing workflow; migrations are the production answer. |
 | Debian-slim Docker image | Alpine | `onnxruntime-node` ships glibc binaries only. |
+| Better Auth in the API | NextAuth in Next.js, Clerk/Auth0, hand-written JWT | Actively maintained, users stay in our Postgres, one auth for browsers and MCP clients, no custom crypto. |
+| Database sessions | JWT + refresh tokens | Instant revocation; one API and one database, so stateless verification buys nothing. |
+| Nullable `userId` + claim on first account | Wipe dev data, or a NOT NULL column with a backfill script | Expand/contract: no data loss, no downtime, reversible. |
 
-Known gaps, deliberately left: authentication and per-user document access control, conversation summarisation, S3 storage, hosted tracing, migrations, reranking model.
+Known gaps, deliberately left: password reset and email verification, roles and document sharing, the contract step for `userId`, conversation summarisation, S3 storage, hosted tracing, migrations, reranking model.
 
 One more worth knowing: the SSE event bus is **in-process**. With a single API process (the default) that is fine; if workers ever run as separate processes (e.g. the eval runner, or a scaled-out deployment), their status events never reach the API's SSE endpoints and the UI falls back to polling. The fix is a Redis pub/sub bridge behind `SseService`, which BullMQ's Redis already makes cheap.

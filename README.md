@@ -1,6 +1,6 @@
 # Mini AI Toolkit
 
-A fullstack AI application: image and text generation with async job processing, a **RAG knowledge base** over your own documents (pgvector, hybrid search), a **streaming tool-using chat agent** with human approval for side effects, an **MCP server** that exposes the same capabilities to external agents, **LLM observability** (tokens, cost, latency per call) and an **evaluation harness** that runs in CI.
+A fullstack AI application: image and text generation with async job processing, a **RAG knowledge base** over your own documents (pgvector, hybrid search), a **streaming tool-using chat agent** with human approval for side effects, an **MCP server** that exposes the same capabilities to external agents, **LLM observability** (tokens, cost, latency per call) and an **evaluation harness** that runs in CI. Everything is **per user**: email + password accounts, API keys for MCP clients, and a daily AI spending limit.
 
 Design notes and interview-oriented explanations live in [`docs/architecture.md`](./docs/architecture.md); the plan and cost notes in [`docs/ai-engineering-roadmap.md`](./docs/ai-engineering-roadmap.md).
 
@@ -23,6 +23,7 @@ Design notes and interview-oriented explanations live in [`docs/architecture.md`
 | Embeddings    | Transformers.js running `bge-small-en-v1.5` **in-process** (no API key), or any hosted embedding API |
 | Text splitting| LangChain `RecursiveCharacterTextSplitter`                                 |
 | Agents / MCP  | AI SDK tool calling with approval; `@modelcontextprotocol/server` (Streamable HTTP) |
+| Auth          | Better Auth in the API: email + password, database sessions (httpOnly cookie), API keys |
 | Image API     | Pollinations.ai                                                            |
 | Testing       | Vitest unit tests, eval harness with LLM-as-judge, GitHub Actions CI       |
 | Infra         | Docker + Docker Compose                                                    |
@@ -103,6 +104,14 @@ The original project deliberately avoided provider abstractions (KISS/YAGNI). Mu
 - Eval harness (`server/evals`): retrieval hit@k and MRR (free, deterministic) plus LLM-as-judge correctness/faithfulness, abstention on unanswerable questions and a prompt-injection test; thresholds fail CI
 - Vitest unit tests for the pure logic (RRF, chunking, injection scanner, pricing, history trimming)
 
+### Accounts and access
+
+- Sign-in / sign-up modal (email + password); sessions are database rows behind an httpOnly cookie (7 days, renewed on use, revoked instantly on sign-out)
+- Every route requires a user except `/api/health`; documents, chats, generations, images, live updates and traces are scoped to their owner
+- Retrieval filters by owner inside the SQL; agent tools get the user id from the session, never from the model
+- API keys (`mat_…`, stored hashed, revocable) authenticate MCP clients and scripts
+- Per-user daily AI budget (`USER_DAILY_BUDGET_USD`) and per-user rate limits
+
 ### Platform
 
 - Circuit breakers around every upstream (4xx never trips them), optional LLM fallback provider
@@ -132,6 +141,7 @@ REDIS_PORT=6379
 POLLINATIONS_API_KEY=your_pollinations_api_key
 SERVER_PORT=4000
 CLIENT_URL=http://localhost:3000
+BETTER_AUTH_SECRET=generate_with_openssl_rand_base64_32
 ```
 
 ```bash
@@ -189,14 +199,16 @@ npm run typecheck          # tsc --noEmit
 npm test                   # vitest unit tests
 npm run eval -- --retrieval-only   # retrieval metrics only (free, needs Postgres + Redis)
 npm run eval               # full run incl. LLM-as-judge (costs a few cents)
-npm run mcp:smoke          # exercises the MCP server against a running API
+MCP_API_KEY=mat_... npm run mcp:smoke   # exercises the MCP server against a running API
+npm run test:auth          # two-user isolation test against a running API (dev/test DB only)
 ```
 
 ### Connecting an MCP client
 
 ```bash
 # Claude Code
-claude mcp add --transport http mini-ai-toolkit http://localhost:4000/api/mcp
+# Create a key first: user menu -> API keys
+claude mcp add --transport http mini-ai-toolkit http://localhost:4000/api/mcp --header "x-api-key: mat_..."
 
 # MCP Inspector
 npx @modelcontextprotocol/inspector --cli http://localhost:4000/api/mcp --method tools/list
@@ -214,6 +226,10 @@ npx @modelcontextprotocol/inspector --cli http://localhost:4000/api/mcp --method
 | `SERVER_PUBLIC_URL` | Public origin of the API, used in image URLs | `http://localhost:<SERVER_PORT>` |
 | `CLIENT_URL` | Allowed CORS origin | `http://localhost:3000` |
 | `STORAGE_DIR` | Directory for generated images | `./storage` |
+| `BETTER_AUTH_SECRET` | Secret for session cookies (`openssl rand -base64 32`) | required |
+| `BETTER_AUTH_URL` | Origin the auth endpoints run on | `SERVER_PUBLIC_URL` |
+| `USER_DAILY_BUDGET_USD` | Per-user daily AI spend limit in USD (0 = unlimited) | `0.5` |
+| `AUTH_CLAIM_LEGACY_DATA` | First account created takes ownership of rows from before auth | `false` |
 | `LLM_PROVIDER` | `pollinations` \| `openai` \| `groq` \| `gemini` \| `ollama` \| `custom` | `pollinations` |
 | `LLM_BASE_URL` / `LLM_API_KEY` | Override the preset endpoint / key (Pollinations reuses `POLLINATIONS_API_KEY`) | preset |
 | `LLM_MODEL` | Main model (chat agent, text generation) | `openai/gpt-5.4-mini` |
@@ -232,7 +248,11 @@ npx @modelcontextprotocol/inspector --cli http://localhost:4000/api/mcp --method
 
 | Method | Path | Description |
 | --- | --- | --- |
-| `GET` | `/api/health` | Health check |
+| `GET` | `/api/health` | Health check (the only public route besides `/api/auth/*`) |
+| `POST` | `/api/auth/sign-up/email` · `/sign-in/email` · `/sign-out` | Better Auth (sets / clears the session cookie) |
+| `GET` | `/api/auth/get-session` | Current session |
+| `POST` | `/api/auth/api-key/create` · `GET /api/auth/api-key/list` · `POST /api/auth/api-key/delete` | API keys for MCP clients |
+| `GET` | `/api/me` | Signed-in user and today's AI spend vs budget |
 | `POST` | `/api/generations` | Submit a generation (`type`, `prompt`, `enhance`, `priority`, `parameters`) |
 | `GET` | `/api/generations` | List generations (paginated, filter by type/status) |
 | `GET` | `/api/generations/:id` | Get one generation |
@@ -262,7 +282,8 @@ npx @modelcontextprotocol/inspector --cli http://localhost:4000/api/mcp --method
 
 ## What I would improve With More Time
 
-- **Authentication and per-user document access control** (filter inside the retrieval query, never after)
+- **Account features**: password reset, email verification, "Sign in with GitHub", roles and document sharing
+- **Contract migration**: make `userId` NOT NULL once legacy rows are claimed
 - **Conversation summarisation** instead of a plain sliding window
 - **S3 storage** for images (the storage interface is already S3-shaped) and **Prisma migrations** instead of `db push` + startup DDL
 - **Hosted tracing** (Langfuse / LangSmith / OpenTelemetry) fed from the existing `LlmCall` records
