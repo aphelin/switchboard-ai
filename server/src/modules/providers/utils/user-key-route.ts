@@ -1,15 +1,29 @@
 import { createAnthropic } from '@ai-sdk/anthropic';
 import { createGoogle } from '@ai-sdk/google';
 import { createOpenAI } from '@ai-sdk/openai';
-import type { LanguageModel } from 'ai';
+import type { ImageModel, LanguageModel } from 'ai';
 import {
   fastModelFor,
   type ByokProvider,
   type CatalogModel,
 } from '../../llm/catalog/model-catalog';
-import type { UserKeyRoute } from '../../llm/types/llm.types';
+import type { ImageCatalogModel } from '../../llm/catalog/image-catalog';
+import type {
+  UserKeyImageRoute,
+  UserKeyRoute,
+} from '../../llm/types/llm.types';
 
 type ModelFactory = (apiKey: string) => (modelId: string) => LanguageModel;
+type ImageModelFactory = (apiKey: string) => (modelId: string) => ImageModel;
+
+/** Providers whose image models the catalog offers (Gemini "Nano Banana" for now). */
+const IMAGE_MODEL_FACTORIES: Partial<Record<ByokProvider, ImageModelFactory>> =
+  {
+    google: (apiKey) => {
+      const provider = createGoogle({ apiKey });
+      return (modelId) => provider.image(modelId);
+    },
+  };
 
 /**
  * Each vendor goes through its own AI SDK provider rather than an
@@ -47,4 +61,15 @@ export function createUserKeyRoute(
     fast,
     languageModel: MODEL_FACTORIES[provider](apiKey),
   };
+}
+
+export function createUserKeyImageRoute(
+  provider: ByokProvider,
+  apiKey: string,
+  model: ImageCatalogModel,
+): UserKeyImageRoute {
+  const factory = IMAGE_MODEL_FACTORIES[provider];
+  if (!factory) throw new Error(`No image models for ${provider}`);
+  if (!apiKey) throw new Error(`Missing ${provider} API key`);
+  return { source: 'user', provider, model, imageModel: factory(apiKey) };
 }

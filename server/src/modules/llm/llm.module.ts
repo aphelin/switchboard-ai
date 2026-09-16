@@ -17,6 +17,7 @@ import { PromptEnhancerService } from './services/prompt-enhancer.service';
   ],
   exports: [
     ModelRegistryService,
+    PricingService,
     LlmService,
     EmbeddingService,
     PromptEnhancerService,

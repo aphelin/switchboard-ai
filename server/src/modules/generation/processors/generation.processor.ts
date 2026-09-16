@@ -3,16 +3,16 @@ import { Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { Job } from 'bullmq';
 import { GenerationRepository } from '../repositories/generation.repository';
-import { PollinationsService } from '../../pollinations/services/pollinations.service';
+import {
+  ImageGenerationService,
+  type ImageRequest,
+} from '../services/image-generation.service';
 import { SseService } from '../../sse/services/sse.service';
 import { LlmService } from '../../llm/services/llm.service';
 import { PromptEnhancerService } from '../../llm/services/prompt-enhancer.service';
 import { ModelRouterService } from '../../providers/services/model-router.service';
 import { StorageService } from '../../../shared/storage/storage.service';
-import {
-  GENERATION_QUEUE,
-  DEFAULT_IMAGE_MODEL,
-} from '../../../shared/constants/app.constants';
+import { GENERATION_QUEUE } from '../../../shared/constants/app.constants';
 import { GenerationType, JobStatus } from 'generated/prisma/enums';
 import type { AppConfiguration } from '../../../config/configuration.interface';
 import type {
@@ -42,7 +42,7 @@ export class GenerationProcessor extends WorkerHost {
 
   constructor(
     private readonly generationRepository: GenerationRepository,
-    private readonly pollinationsService: PollinationsService,
+    private readonly imageGeneration: ImageGenerationService,
     private readonly sseService: SseService,
     private readonly llmService: LlmService,
     private readonly modelRouter: ModelRouterService,
@@ -154,17 +154,29 @@ export class GenerationProcessor extends WorkerHost {
   ): Promise<void> {
     const { generationId } = context;
     const imageParams = parameters || {};
-    const effectiveModel = imageParams.model || DEFAULT_IMAGE_MODEL;
     const negativePrompt =
       imageParams.negativePrompt || resolved.negativePrompt;
+    // An edit reads the source image here, not at creation: the bytes never travel through the queue.
+    const source = imageParams.sourceGenerationId
+      ? await this.loadSourceImage(context, imageParams.sourceGenerationId)
+      : undefined;
+    // Resolved in the worker, so a key removed while the job waited is not used.
+    const route = await this.modelRouter.resolveImage(
+      context.userId,
+      imageParams.model,
+      { edit: !!source },
+    );
 
-    const result = await this.pollinationsService.generateImage({
+    const result = await this.imageGeneration.generate({
+      route,
       prompt: resolved.prompt,
-      model: effectiveModel,
       width: imageParams.width,
       height: imageParams.height,
       seed: imageParams.seed,
       negativePrompt,
+      source,
+      userId: context.userId,
+      traceId: generationId,
     });
 
     if (await this.isCancelled(generationId)) return;
@@ -182,7 +194,8 @@ export class GenerationProcessor extends WorkerHost {
         enhancedPrompt: resolved.enhancedPrompt,
         parameters: {
           ...imageParams,
-          model: effectiveModel,
+          // The catalog id, so a retry runs on the same model and the UI can show its name.
+          model: route.model.id,
           ...(negativePrompt && { negativePrompt }),
           storageKey,
         },
@@ -195,6 +208,27 @@ export class GenerationProcessor extends WorkerHost {
       imageUrl,
       enhancedPrompt: resolved.enhancedPrompt,
     });
+  }
+
+  /** The finished image an edit starts from. It must belong to the job's owner and still have its file. */
+  private async loadSourceImage(
+    context: JobContext,
+    sourceGenerationId: string,
+  ): Promise<NonNullable<ImageRequest['source']>> {
+    const source = await this.generationRepository.findById(sourceGenerationId);
+    if (!source || source.userId !== context.userId) {
+      throw new Error('The image to edit was not found');
+    }
+    const storageKey = (source.parameters as { storageKey?: string } | null)
+      ?.storageKey;
+    if (source.status !== JobStatus.COMPLETED || !storageKey) {
+      throw new Error('The image to edit is not finished');
+    }
+    return {
+      data: await this.storage.get(storageKey),
+      contentType: this.storage.contentTypeFor(storageKey),
+      generationId: sourceGenerationId,
+    };
   }
 
   private async processTextGeneration(

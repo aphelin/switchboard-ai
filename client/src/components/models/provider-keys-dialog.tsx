@@ -1,14 +1,16 @@
 "use client";
 
 import { useState, type FormEvent } from "react";
-import { Bot, ExternalLink, Loader2, ShieldAlert, Trash2 } from "lucide-react";
+import { Bot, ExternalLink, ShieldAlert, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import { deleteProviderKey, saveProviderKey } from "@/lib/api";
 import { ApiError, toastApiError } from "@/lib/api-errors";
 import type { ProviderId, ProviderStatus } from "@/lib/types";
 import { cn } from "@/lib/utils";
-import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Spin } from "@/components/tui/spin";
+import { GhostRows } from "@/components/tui/ghost";
+import { Mark } from "@/components/tui/mark";
 import {
   Dialog,
   DialogContent,
@@ -24,6 +26,7 @@ interface ProviderKeysDialogProps {
   focusProvider?: ProviderId;
   providers: ProviderStatus[];
   byokEnabled: boolean;
+  byokDisabledReason?: "server" | "guest" | null;
   loading: boolean;
   onChanged: () => Promise<void>;
 }
@@ -49,6 +52,7 @@ export function ProviderKeysDialog({
   focusProvider,
   providers,
   byokEnabled,
+  byokDisabledReason,
   loading,
   onChanged,
 }: ProviderKeysDialogProps) {
@@ -122,7 +126,7 @@ export function ProviderKeysDialog({
   return (
     <Dialog open={open} onOpenChange={handleOpenChange}>
       <DialogContent
-        className="sm:max-w-lg"
+        className="sm:max-w-xl"
         data-testid="provider-keys-dialog"
         initialFocus={() =>
           focusProvider
@@ -131,41 +135,43 @@ export function ProviderKeysDialog({
         }
       >
         <DialogHeader>
-          <DialogTitle className="flex items-center gap-2">
-            <Bot className="h-4 w-4" />
+          <DialogTitle>
+            <Bot />
             AI providers
           </DialogTitle>
           <DialogDescription>
-            Your key is encrypted on the server and never shown again. Requests on your key are
-            billed by that provider and don&apos;t use your daily budget.
+            The server encrypts your key and never shows it again. That provider bills the requests
+            made on your key, and they do not count against your daily budget.
           </DialogDescription>
         </DialogHeader>
 
         {!byokEnabled && !loading && providers.length > 0 && (
-          <div
-            className="flex items-start gap-2 rounded-lg border border-amber-500/40 bg-amber-500/5 px-3 py-2 text-xs"
-            data-testid="byok-disabled"
-          >
-            <ShieldAlert className="mt-0.5 h-3.5 w-3.5 shrink-0 text-amber-600 dark:text-amber-400" />
-            <p>
-              The server administrator hasn&apos;t enabled your own provider keys (no encryption key
-              is configured). The included models still work.
-            </p>
-          </div>
+          <p className="flex items-start gap-2 rounded-2xl bg-warn/12 px-4 py-2.5 text-sm text-warn" data-testid="byok-disabled">
+            <ShieldAlert className="mt-0.5 size-4 shrink-0" />
+            {byokDisabledReason === "guest" ? (
+              <span data-testid="byok-disabled-guest">
+                Demo sessions run on the included models and can&apos;t store keys. Create an account
+                to use your own OpenAI, Anthropic or Google key.
+              </span>
+            ) : (
+              <span>
+                The server administrator hasn&apos;t enabled your own provider keys (no encryption key
+                is configured). The included models still work.
+              </span>
+            )}
+          </p>
         )}
 
-        <div className="max-h-[60vh] space-y-2 overflow-y-auto" data-testid="provider-key-list">
+        <div className="flex max-h-[60vh] flex-col gap-3 overflow-y-auto pr-1" data-testid="provider-key-list">
           {keyProviders.length === 0 ? (
             loading ? (
-              <p className="flex items-center gap-2 text-xs text-muted-foreground">
-                <Loader2 className="h-3 w-3 animate-spin" /> Loading providers…
-              </p>
+              <GhostRows rows={3} />
             ) : (
-              <div className="flex items-center justify-between gap-2 text-xs text-muted-foreground">
+              <div className="flex items-center justify-between gap-2 text-sm text-dim">
                 <span>Couldn&apos;t load AI providers.</span>
-                <Button variant="outline" size="xs" onClick={() => void onChanged()}>
+                <button type="button" className="btn btn-glass btn-xs" onClick={() => void onChanged()}>
                   Retry
-                </Button>
+                </button>
               </div>
             )
           ) : (
@@ -181,35 +187,37 @@ export function ProviderKeysDialog({
                 <div
                   key={provider.id}
                   className={cn(
-                    "space-y-2 rounded-lg border px-3 py-2.5",
-                    focusProvider === provider.id && "border-primary/50 bg-primary/5",
+                    "glass-inner flex flex-col gap-3 px-4 py-3.5",
+                    focusProvider === provider.id && "ring-2 ring-accent/40",
                   )}
                   data-testid={`provider-row-${provider.id}`}
                 >
-                  <div className="flex items-start justify-between gap-3">
+                  <div className="flex items-start justify-between gap-4">
                     <div className="min-w-0">
-                      <label htmlFor={inputId} className="block text-sm font-medium">
+                      <label htmlFor={inputId} className="block text-[15px] font-bold">
                         {provider.label}
                       </label>
-                      <p
-                        className="truncate text-xs text-muted-foreground"
-                        data-testid={`provider-status-${provider.id}`}
-                      >
+                      <p className="truncate text-sm text-dim" data-testid={`provider-status-${provider.id}`}>
                         {provider.connected ? (
                           <>
-                            <span className="text-emerald-600 dark:text-emerald-400">Connected</span>
+                            <Mark tone="ok" className="text-sm">Connected</Mark>
                             {provider.keyHint && (
                               <>
                                 {" · "}
-                                <span className="font-mono">…{provider.keyHint}</span>
+                                <span className="data">…{provider.keyHint}</span>
                               </>
                             )}
                             {updated && ` · updated ${updated}`}
                           </>
                         ) : (
-                          "Not connected"
+                          <Mark tone="dim" shape="hollow" className="text-sm">Not connected</Mark>
                         )}
                       </p>
+                      {provider.id === "google" && provider.imageModels.length > 0 && (
+                        <p className="text-xs text-dim" data-testid={`provider-image-hint-${provider.id}`}>
+                          Also enables the Nano Banana image models
+                        </p>
+                      )}
                     </div>
                     <div className="flex shrink-0 items-center gap-1">
                       {provider.keyUrl && (
@@ -217,40 +225,39 @@ export function ProviderKeysDialog({
                           href={provider.keyUrl}
                           target="_blank"
                           rel="noreferrer noopener"
-                          className="inline-flex items-center gap-1 rounded-md px-1.5 py-1 text-xs text-primary underline-offset-2 hover:underline"
+                          className="chip chip-sm"
                         >
                           Get a key
-                          <ExternalLink className="h-3 w-3" />
+                          <ExternalLink className="size-3.5" />
                         </a>
                       )}
                       {provider.connected &&
                         (confirming === provider.id ? (
                           <>
-                            <Button
-                              variant="destructive"
-                              size="xs"
+                            <button
+                              type="button"
+                              className="btn btn-danger btn-xs"
                               disabled={removing}
                               onClick={() => void handleRemove(provider)}
                               data-testid={`provider-remove-confirm-${provider.id}`}
                             >
-                              {removing ? <Loader2 className="h-3 w-3 animate-spin" /> : "Remove"}
-                            </Button>
-                            <Button variant="ghost" size="xs" onClick={() => setConfirming(null)}>
+                              {removing ? <Spin /> : "Remove"}
+                            </button>
+                            <button type="button" className="btn btn-ghost btn-xs" onClick={() => setConfirming(null)}>
                               Cancel
-                            </Button>
+                            </button>
                           </>
                         ) : (
-                          <Button
-                            variant="ghost"
-                            size="xs"
-                            className="gap-1 text-muted-foreground hover:text-destructive"
+                          <button
+                            type="button"
+                            className="btn btn-ghost btn-xs hover:text-err"
                             disabled={busy !== null}
                             onClick={() => setConfirming(provider.id)}
                             data-testid={`provider-remove-${provider.id}`}
                           >
-                            <Trash2 className="h-3 w-3" />
+                            <Trash2 />
                             Remove
-                          </Button>
+                          </button>
                         ))}
                     </div>
                   </div>
@@ -274,35 +281,34 @@ export function ProviderKeysDialog({
                         setDraft(provider.id, e.target.value);
                         if (error) setError(provider.id, undefined);
                       }}
-                      className="min-w-0 flex-1 font-mono text-xs"
+                      className="field-sm field-data h-10 min-w-0 flex-1"
                       data-provider-key-input={provider.id}
                       data-1p-ignore
                       data-lpignore="true"
                       data-testid={`provider-key-input-${provider.id}`}
                     />
-                    <Button
+                    <button
                       type="submit"
-                      size="sm"
-                      className="h-8"
+                      className="btn btn-accent btn-sm"
                       disabled={!byokEnabled || !draft.trim() || busy !== null}
                       data-testid={`provider-key-save-${provider.id}`}
                     >
                       {saving ? (
                         <>
-                          <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                          Verifying…
+                          <Spin />
+                          Verifying
                         </>
                       ) : (
                         "Save & verify"
                       )}
-                    </Button>
+                    </button>
                   </form>
 
                   {error && (
                     <p
                       id={`${inputId}-error`}
                       role="alert"
-                      className="text-xs text-destructive"
+                      className="text-sm text-err"
                       data-testid={`provider-key-error-${provider.id}`}
                     >
                       {error}

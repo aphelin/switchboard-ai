@@ -1,21 +1,16 @@
 import type { Metadata } from 'next';
-import { Geist, Geist_Mono } from 'next/font/google';
+import { Urbanist } from 'next/font/google';
 import { Toaster } from '@/components/ui/sonner';
-import { Navbar } from '@/components/layout/navbar';
-import { ThemeProvider } from '@/components/layout/theme-provider';
-import { SseProvider } from '@/hooks/use-sse';
-import { ModelsProvider } from '@/hooks/use-models';
 import { AuthGate } from '@/components/auth/auth-gate';
+import { Aurora } from '@/components/layout/aurora';
+import { SITE_DESCRIPTION, SITE_NAME } from '@/lib/site';
 import './globals.css';
 
-const geistSans = Geist({
-  variable: '--font-geist-sans',
+// Urbanist carries everything, display to readouts.
+const urbanist = Urbanist({
   subsets: ['latin'],
-});
-
-const geistMono = Geist_Mono({
-  variable: '--font-geist-mono',
-  subsets: ['latin'],
+  variable: '--font-urbanist',
+  display: 'swap',
 });
 
 const APP_URL = process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000';
@@ -23,27 +18,24 @@ const APP_URL = process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000';
 export const metadata: Metadata = {
   metadataBase: new URL(APP_URL),
   title: {
-    default: 'Mini AI Toolkit',
-    template: '%s | Mini AI Toolkit',
+    default: SITE_NAME,
+    template: `%s · ${SITE_NAME}`,
   },
-  description:
-    'Generate AI images and text through a prompt-based interface with async job processing and priority queuing.',
-  keywords: ['AI', 'image generation', 'text generation', 'Pollinations', 'prompt'],
-  authors: [{ name: 'Mini AI Toolkit' }],
+  description: SITE_DESCRIPTION,
+  keywords: ['AI', 'RAG', 'agents', 'MCP', 'image generation', 'LLM observability', 'pgvector'],
+  authors: [{ name: SITE_NAME }],
   openGraph: {
     type: 'website',
     locale: 'en_US',
     url: APP_URL,
-    siteName: 'Mini AI Toolkit',
-    title: 'Mini AI Toolkit',
-    description:
-      'Generate AI images and text through a prompt-based interface with async job processing and priority queuing.',
+    siteName: SITE_NAME,
+    title: SITE_NAME,
+    description: SITE_DESCRIPTION,
   },
   twitter: {
     card: 'summary_large_image',
-    title: 'Mini AI Toolkit',
-    description:
-      'Generate AI images and text through a prompt-based interface with async job processing and priority queuing.',
+    title: SITE_NAME,
+    description: SITE_DESCRIPTION,
   },
   robots: {
     index: true,
@@ -57,24 +49,14 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html lang="en" suppressHydrationWarning>
-      <body
-        className={`${geistSans.variable} ${geistMono.variable} antialiased`}
-      >
-        <ThemeProvider>
-          {/* Nothing inside the gate mounts (no API calls, no SSE) until a session exists. */}
-          <AuthGate>
-            <SseProvider>
-              <ModelsProvider>
-                <Navbar />
-                <main className="mx-auto min-h-[calc(100vh-3.5rem)] max-w-6xl px-4 py-6">
-                  {children}
-                </main>
-              </ModelsProvider>
-            </SseProvider>
-          </AuthGate>
+    <html lang="en" className={urbanist.variable}>
+      <body>
+        <Aurora />
+        {/* Everything paints above the ground layer. Nothing inside the gate mounts until a session exists. */}
+        <div className="relative z-[1]">
+          <AuthGate>{children}</AuthGate>
           <Toaster />
-        </ThemeProvider>
+        </div>
       </body>
     </html>
   );

@@ -71,5 +71,14 @@ export function useGenerations(options: UseGenerationsOptions = {}) {
     });
   }, []);
 
-  return { result, loading, error, refetch: fetchData, handleSSEEvent };
+  /** Drops a deleted generation from the page without a reload (no skeleton flash). */
+  const removeLocal = useCallback((id: string) => {
+    setResult((prev) =>
+      prev
+        ? { ...prev, data: prev.data.filter((gen) => gen.id !== id), total: Math.max(0, prev.total - 1) }
+        : prev,
+    );
+  }, []);
+
+  return { result, loading, error, refetch: fetchData, handleSSEEvent, removeLocal };
 }

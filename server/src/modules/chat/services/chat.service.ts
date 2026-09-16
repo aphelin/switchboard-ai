@@ -6,6 +6,7 @@ import {
 } from '@nestjs/common';
 import type { Response } from 'express';
 import {
+  generateId,
   convertToModelMessages,
   isStepCount,
   pipeUIMessageStreamToResponse,
@@ -20,6 +21,7 @@ import { GenerationService } from '../../generation/services/generation.service'
 import { BudgetService } from '../../auth/services/budget.service';
 import { ModelRouterService } from '../../providers/services/model-router.service';
 import { ChatRepository } from '../repositories/chat.repository';
+import { ChatAttachmentsService } from './chat-attachments.service';
 import type { ChatRequestDto } from '../dto/chat-request.dto';
 import { QueryConversationsDto } from '../dto/query-conversations.dto';
 import { buildChatTools, CHAT_TOOL_APPROVAL } from '../tools/chat-tools';
@@ -56,33 +58,48 @@ export class ChatService {
     private readonly repository: ChatRepository,
     private readonly budget: BudgetService,
     private readonly router: ModelRouterService,
+    private readonly attachments: ChatAttachmentsService,
   ) {}
 
   async stream(
     userId: string,
     dto: ChatRequestDto,
     res: Response,
+    abortSignal?: AbortSignal,
   ): Promise<void> {
     const route = await this.routeFor(userId, dto.model);
     const conversation = await this.ensureConversation(userId, dto.id);
     const uiMessages = await validateUIMessages({ messages: dto.messages });
-    const documentIds = dto.documentIds?.length ? dto.documentIds : undefined;
+    // Attached images leave the messages here (stored, small URL left behind) before anything is persisted.
+    await this.attachments.store(conversation.id, uiMessages);
+    // "Pick" with nothing ticked means nothing is allowed, not everything.
+    const documentsDisabled =
+      dto.documentScope === 'none' ||
+      (dto.documentScope === 'selected' && !dto.documentIds?.length);
+    const documentIds =
+      !documentsDisabled && dto.documentIds?.length
+        ? dto.documentIds
+        : undefined;
 
     // The user id comes from the session, never from the model: tools cannot be steered to another user's data.
     const tools = buildChatTools({
       retrieval: this.retrieval,
       documents: this.documents,
       generations: this.generations,
+      attachments: this.attachments,
+      conversationId: conversation.id,
       userId,
       documentIds,
+      documentsDisabled,
       traceId: conversation.id,
     });
 
     const history = trimHistory(uiMessages, CHAT.MAX_CONTEXT_MESSAGES);
-    const modelMessages = await convertToModelMessages(history, {
-      tools,
-      ignoreIncompleteToolCalls: true,
-    });
+    // The model gets the attachment bytes inline: the provider cannot fetch URLs behind this user's session.
+    const modelMessages = await convertToModelMessages(
+      await this.attachments.inline(conversation.id, history),
+      { tools, ignoreIncompleteToolCalls: true },
+    );
 
     const result = this.llm.streamText({
       name: 'chat.stream',
@@ -91,12 +108,14 @@ export class ChatService {
       metadata: {
         promptVersion: ASSISTANT_PROMPT_VERSION,
         documentIds,
+        documentScope: dto.documentScope,
         modelChoice: dto.model,
       },
       route,
       model: 'main',
       instructions: buildAssistantInstructions({
         selectedDocuments: documentIds?.length ?? 0,
+        documentsDisabled,
       }),
       // The system prompt and tool definitions are identical on every turn.
       cacheInstructions: true,
@@ -104,12 +123,16 @@ export class ChatService {
       tools,
       toolApproval: CHAT_TOOL_APPROVAL,
       stopWhen: isStepCount(CHAT.MAX_STEPS),
+      // Reaches running tools too: a stopped chat cancels the image job it was waiting on.
+      abortSignal,
     });
 
     const stream = toUIMessageStream({
       stream: result.stream,
       tools,
       originalMessages: uiMessages,
+      // Without this the reply's id is "", so every conversation's reply upserts into one shared row.
+      generateMessageId: generateId,
       messageMetadata: ({ part }) =>
         part.type === 'start' ? { conversationId: conversation.id } : undefined,
       // Streamed to the browser: provider named, key problems explained, secrets masked.
@@ -143,9 +166,11 @@ export class ChatService {
       documentIds,
       traceId: params.traceId,
     });
-    // No side effects without a human: the image tool is only available in the interactive chat.
+    // No side effects without a human: the image tools are only available in the interactive chat.
     const readOnlyTools = Object.fromEntries(
-      Object.entries(tools).filter(([name]) => name !== 'generate_image'),
+      Object.entries(tools).filter(
+        ([name]) => name !== 'generate_image' && name !== 'edit_image',
+      ),
     );
 
     const result = await this.llm.generateText({
@@ -218,6 +243,11 @@ export class ChatService {
     await this.repository.deleteConversation(id);
   }
 
+  /** Throws not-found unless the conversation is this user's (attachments are served through it). */
+  async assertOwner(userId: string, id: string): Promise<void> {
+    await this.findOwnedConversation(userId, id);
+  }
+
   /** Reads never reveal whether another user's conversation exists. */
   private async findOwnedConversation(userId: string, id: string) {
     const conversation = await this.repository.findConversation(id);
@@ -246,12 +276,15 @@ export class ChatService {
     try {
       await this.repository.upsertMessages(
         conversationId,
-        messages.map((message) => ({
-          id: message.id,
-          role: message.role,
-          parts: message.parts,
-          metadata: message.metadata,
-        })),
+        // An empty id would upsert over another conversation's message (ids are the primary key).
+        messages
+          .filter((message) => message.id)
+          .map((message) => ({
+            id: message.id,
+            role: message.role,
+            parts: message.parts,
+            metadata: message.metadata,
+          })),
       );
     } catch (error) {
       this.logger.error(

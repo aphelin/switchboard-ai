@@ -42,8 +42,8 @@ async function bootstrap() {
   const expressApp = app.getHttpAdapter().getInstance();
   expressApp.all('/api/auth/*splat', toNodeHandler(auth));
 
-  // Chat requests carry the whole conversation (tool results included).
-  app.useBodyParser('json', { limit: '5mb' });
+  // Chat requests carry the whole conversation (tool results included) and, on the turn that adds them, attached images as data URLs.
+  app.useBodyParser('json', { limit: '12mb' });
   app.useBodyParser('urlencoded', { extended: true, limit: '1mb' });
 
   app.useGlobalPipes(

@@ -32,7 +32,10 @@ config({ path: process.env.ENV_FILE ?? '.env.development', quiet: true });
 
 const LIVE_ANTHROPIC_KEY = process.env.E2E_ANTHROPIC_API_KEY;
 const HAIKU = 'anthropic:claude-haiku-4-5';
+const NANO_BANANA = 'google:gemini-3.1-flash-image';
 const TRACE_TIMEOUT_MS = 15_000;
+const GENERATION_TIMEOUT_MS = 60_000;
+const TERMINAL_STATUSES = ['COMPLETED', 'FAILED', 'CANCELLED'];
 /** Polling stays well under the per-user limit of 30 requests a minute. */
 const TRACE_POLL_MS = 2_500;
 
@@ -41,12 +44,20 @@ interface ProviderStatus {
   connected: boolean;
   keyHint: string | null;
   models: Array<{ id: string; pricing: unknown }>;
+  imageModels?: Array<{ id: string; pricePerImageUsd: number | null }>;
 }
 
 interface ProvidersBody {
   byokEnabled: boolean;
   defaultModel: string;
+  defaultImageModel?: string;
   providers: ProviderStatus[];
+}
+
+interface GenerationBody {
+  id: string;
+  status: string;
+  error: string | null;
 }
 
 interface ErrorBody {
@@ -147,6 +158,23 @@ async function waitForCall(
   return undefined;
 }
 
+async function waitForGeneration(
+  client: Client,
+  id: string,
+): Promise<GenerationBody | undefined> {
+  const deadline = Date.now() + GENERATION_TIMEOUT_MS;
+  while (Date.now() < deadline) {
+    const res = await send<GenerationBody>(
+      client,
+      'GET',
+      `/api/generations/${id}`,
+    );
+    if (TERMINAL_STATUSES.includes(res.body?.status)) return res.body;
+    await sleep(TRACE_POLL_MS);
+  }
+  return undefined;
+}
+
 async function main(): Promise<void> {
   const encryptionKey = process.env.CREDENTIALS_ENCRYPTION_KEY;
   const databaseUrl = process.env.DATABASE_URL;
@@ -191,6 +219,19 @@ async function main(): Promise<void> {
         (model) => model.id === HAIKU && model.pricing,
       ),
       `${HAIKU} is listed with a price`,
+    );
+    const google = catalog.body?.providers?.find((p) => p.id === 'google');
+    check(
+      google?.imageModels?.some(
+        (model) => model.id === NANO_BANANA && model.pricePerImageUsd,
+      ),
+      `${NANO_BANANA} is listed with a per-image price`,
+    );
+    check(
+      catalog.body?.providers?.[0]?.imageModels?.some(
+        (model) => model.id === catalog.body.defaultImageModel,
+      ),
+      `the default image model (${catalog.body?.defaultImageModel}) is an included model`,
     );
 
     console.log('\n[key submission]');
@@ -283,6 +324,29 @@ async function main(): Promise<void> {
     check(
       isError(noKeyText, 'Provider Key Required'),
       `text generation on ${HAIKU} needs a key (${noKeyText.status})`,
+    );
+    const noKeyImage = await send<ErrorBody>(bob, 'POST', '/api/generations', {
+      prompt: 'A red lighthouse at sunrise',
+      type: 'IMAGE',
+      parameters: { model: NANO_BANANA },
+    });
+    check(
+      isError(noKeyImage, 'Provider Key Required'),
+      `image generation on ${NANO_BANANA} needs a key (${noKeyImage.status})`,
+    );
+    const retiredImage = await send<ErrorBody>(
+      bob,
+      'POST',
+      '/api/generations',
+      {
+        prompt: 'A red lighthouse at sunrise',
+        type: 'IMAGE',
+        parameters: { model: 'seedream' },
+      },
+    );
+    check(
+      isError(retiredImage, 'Unknown Model'),
+      `an image model Pollinations no longer offers is rejected (${retiredImage.status})`,
     );
 
     console.log('\n[a stored key only serves its owner]');
@@ -377,6 +441,59 @@ async function main(): Promise<void> {
       "Bob can't see the trace",
     );
 
+    console.log("\n[image generation on Alice's Google key]");
+    const googleKey = `AIzaSyE2E${stamp}${'g'.repeat(24)}`;
+    secrets.push(googleKey);
+    const encryptedGoogleKey = SecretBox.fromBase64Key(encryptionKey).encrypt(
+      googleKey,
+      credentialContext(aliceId, 'google'),
+    );
+    await prisma.providerCredential.upsert({
+      where: { userId_provider: { userId: aliceId, provider: 'google' } },
+      create: {
+        userId: aliceId,
+        provider: 'google',
+        encryptedKey: encryptedGoogleKey,
+        keyHint: googleKey.slice(-4),
+      },
+      update: { encryptedKey: encryptedGoogleKey, keyHint: googleKey.slice(-4) },
+    });
+    const imageJob = await send<GenerationBody>(
+      alice,
+      'POST',
+      '/api/generations',
+      {
+        prompt: 'A red lighthouse at sunrise',
+        type: 'IMAGE',
+        parameters: { model: NANO_BANANA, width: 1920, height: 1080 },
+      },
+    );
+    check(
+      imageJob.status === 201,
+      `Alice can queue ${NANO_BANANA} with her key (${imageJob.status})`,
+    );
+    const imageResult = imageJob.body?.id
+      ? await waitForGeneration(alice, imageJob.body.id)
+      : undefined;
+    check(
+      imageResult?.status === 'FAILED' &&
+        (imageResult.error ?? '').includes('Google Gemini'),
+      `Google's rejection of the fake key fails the job with a clear error (${imageResult?.status}: ${imageResult?.error})`,
+    );
+    const imageCall = imageJob.body?.id
+      ? await waitForCall(
+          alice,
+          imageJob.body.id,
+          (call) => call.name === 'generation.image',
+        )
+      : undefined;
+    check(
+      imageCall?.provider === 'google' &&
+        imageCall.keySource === 'user' &&
+        imageCall.status === 'error',
+      `traced as Google on Alice's key (${imageCall?.provider}/${imageCall?.keySource}/${imageCall?.status})`,
+    );
+
     if (!LIVE_ANTHROPIC_KEY) {
       console.log(
         '\n[real key] skipped (set E2E_ANTHROPIC_API_KEY to run one real chat turn)',
@@ -432,6 +549,15 @@ async function main(): Promise<void> {
     console.log('\n[remove the key]');
     const removed = await send(alice, 'DELETE', '/api/providers/anthropic/key');
     check(removed.status === 204, `Alice removed her key (${removed.status})`);
+    const removedGoogle = await send(
+      alice,
+      'DELETE',
+      '/api/providers/google/key',
+    );
+    check(
+      removedGoogle.status === 204,
+      `Alice removed her Google key (${removedGoogle.status})`,
+    );
     const afterRemove = await send<ProvidersBody>(
       alice,
       'GET',

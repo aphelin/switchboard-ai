@@ -3,6 +3,7 @@ import {
   IsEnum,
   IsOptional,
   IsBoolean,
+  IsUUID,
   MinLength,
   MaxLength,
   IsNumber,
@@ -15,12 +16,16 @@ import {
   GenerationType,
   JobPriority,
 } from '../../../../generated/prisma/enums.js';
-import { ImageModel } from '../../../shared/constants/models.constants.js';
-
 export class ImageParametersDto {
+  /**
+   * Image catalog id (GET /api/providers, `imageModels`), e.g. "platform:flux"
+   * or "google:gemini-3.1-flash-image"; bare legacy ids like "flux" still work.
+   * Checked against the catalog and the user's stored keys by the service.
+   */
   @IsOptional()
-  @IsEnum(ImageModel)
-  model?: ImageModel;
+  @IsString()
+  @MaxLength(120)
+  model?: string;
 
   @IsOptional()
   @IsNumber()
@@ -41,6 +46,16 @@ export class ImageParametersDto {
   @IsOptional()
   @IsString()
   negativePrompt?: string;
+
+  /**
+   * Edit an existing image instead of drawing a new one: the id of one of the
+   * user's finished image generations. The model must be able to edit
+   * (`capabilities.edit` in the catalog); with no model named, the included
+   * editing model is used.
+   */
+  @IsOptional()
+  @IsUUID()
+  sourceGenerationId?: string;
 }
 
 export class TextParametersDto {

@@ -1,27 +1,16 @@
 import { Badge } from '@/components/ui/badge';
-import { ChevronUp, Minus, ChevronDown } from 'lucide-react';
 import { JobPriority, JOB_PRIORITY_LABELS } from '@/lib/constants';
 
-type BadgeVariant = 'default' | 'secondary' | 'destructive' | 'outline';
-
-const PRIORITY_VARIANT: Record<JobPriority, BadgeVariant> = {
-  [JobPriority.HIGH]: 'destructive',
+const PRIORITY_VARIANT = {
+  [JobPriority.HIGH]: 'warning',
   [JobPriority.NORMAL]: 'secondary',
-  [JobPriority.LOW]: 'outline',
-};
+  [JobPriority.LOW]: 'secondary',
+} as const;
 
-const PRIORITY_ICON: Record<JobPriority, React.ElementType> = {
-  [JobPriority.HIGH]: ChevronUp,
-  [JobPriority.NORMAL]: Minus,
-  [JobPriority.LOW]: ChevronDown,
-};
-
-export function PriorityBadge({ priority }: { priority: JobPriority }) {
-  const Icon = PRIORITY_ICON[priority];
-
+/** Queue priority as a small pill. */
+export function PriorityBadge({ priority, className }: { priority: JobPriority; className?: string }) {
   return (
-    <Badge variant={PRIORITY_VARIANT[priority]} className="gap-1">
-      <Icon className="h-3 w-3" />
+    <Badge variant={PRIORITY_VARIANT[priority]} className={className} title={`${JOB_PRIORITY_LABELS[priority]} priority`}>
       {JOB_PRIORITY_LABELS[priority]}
     </Badge>
   );

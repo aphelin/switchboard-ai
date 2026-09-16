@@ -1,5 +1,6 @@
-import type { LanguageModel, LanguageModelUsage } from 'ai';
+import type { ImageModel, LanguageModel, LanguageModelUsage } from 'ai';
 import type { ByokProvider, CatalogModel } from '../catalog/model-catalog';
+import type { ImageCatalogModel } from '../catalog/image-catalog';
 
 /** "main" = the configured LLM_MODEL, "fast" = the cheap LLM_FAST_MODEL. Any other string is a raw model id. */
 export type ModelTier = 'main' | 'fast';
@@ -29,6 +30,22 @@ export interface UserKeyRoute {
 }
 
 export const PLATFORM_ROUTE: PlatformRoute = { source: 'platform' };
+
+/** Where an image generation runs: Pollinations on the app's key, or a provider on the user's own key. */
+export type ImageRoute = PlatformImageRoute | UserKeyImageRoute;
+
+export interface PlatformImageRoute {
+  source: 'platform';
+  model: ImageCatalogModel;
+}
+
+export interface UserKeyImageRoute {
+  source: 'user';
+  provider: ByokProvider;
+  model: ImageCatalogModel;
+  /** Builds an image model bound to the user's key; the key only lives inside this closure. */
+  imageModel: (modelId: string) => ImageModel;
+}
 
 /** Attribution for a traced call: which request it belongs to and who pays for it. */
 export interface TraceContext {

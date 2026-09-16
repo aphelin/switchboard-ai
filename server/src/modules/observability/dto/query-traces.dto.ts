@@ -1,4 +1,5 @@
 import {
+  IsIn,
   IsOptional,
   IsString,
   IsNumber,
@@ -7,6 +8,18 @@ import {
   MaxLength,
 } from 'class-validator';
 import { Type } from 'class-transformer';
+
+/** Columns of the call ledger that can be sorted. */
+export const TRACE_SORT_FIELDS = [
+  'createdAt',
+  'name',
+  'model',
+  'inputTokens',
+  'costUsd',
+  'latencyMs',
+  'status',
+] as const;
+export type TraceSortField = (typeof TRACE_SORT_FIELDS)[number];
 
 export class QueryTracesDto {
   @IsOptional()
@@ -18,6 +31,14 @@ export class QueryTracesDto {
   @IsString()
   @MaxLength(100)
   name?: string;
+
+  @IsOptional()
+  @IsIn(TRACE_SORT_FIELDS)
+  sort?: TraceSortField;
+
+  @IsOptional()
+  @IsIn(['asc', 'desc'])
+  order?: 'asc' | 'desc';
 
   @IsOptional()
   @Type(() => Number)

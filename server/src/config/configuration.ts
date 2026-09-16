@@ -11,6 +11,8 @@ import {
 import { EMBEDDING_DIMENSIONS } from '../shared/constants/app.constants';
 
 const DEFAULT_DAILY_BUDGET_USD = 0.5;
+const DEFAULT_GUEST_DAILY_BUDGET_USD = 0.1;
+const DEFAULT_TOTAL_GUEST_DAILY_BUDGET_USD = 2;
 
 const resolveProvider = (
   name: LlmProviderName,
@@ -33,15 +35,27 @@ const resolveProvider = (
 };
 
 /** 0 (or an invalid value) disables the budget. */
-const parseDailyBudget = (value: string | undefined): number | null => {
-  const budget = value === undefined ? DEFAULT_DAILY_BUDGET_USD : Number(value);
+const parseDailyBudget = (
+  value: string | undefined,
+  fallback = DEFAULT_DAILY_BUDGET_USD,
+): number | null => {
+  const budget = value === undefined ? fallback : Number(value);
   return Number.isFinite(budget) && budget > 0 ? budget : null;
+};
+
+const parsePositiveInt = (value: string | undefined, fallback: number) => {
+  const parsed = value === undefined ? fallback : parseInt(value, 10);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
 };
 
 export const configuration = (): AppConfiguration => {
   const port = parseInt(process.env.SERVER_PORT || '4000', 10);
   const publicUrl = process.env.SERVER_PUBLIC_URL || `http://localhost:${port}`;
-  const clientUrl = process.env.CLIENT_URL || 'http://localhost:3000';
+  // One or more browser origins, comma-separated: a second dev port, a preview host.
+  const clientUrls = (process.env.CLIENT_URL || 'http://localhost:3000')
+    .split(',')
+    .map((url) => url.trim())
+    .filter(Boolean);
   const primaryName = (process.env.LLM_PROVIDER ||
     'pollinations') as LlmProviderName;
   const primaryModel = process.env.LLM_MODEL || 'openai/gpt-5.4-mini';
@@ -54,7 +68,7 @@ export const configuration = (): AppConfiguration => {
       port,
       publicUrl,
       cors: {
-        origin: clientUrl,
+        origin: clientUrls,
         credentials: true,
       },
     },
@@ -108,9 +122,27 @@ export const configuration = (): AppConfiguration => {
     auth: {
       secret: process.env.BETTER_AUTH_SECRET!,
       baseUrl: process.env.BETTER_AUTH_URL || publicUrl,
-      trustedOrigins: [clientUrl],
+      trustedOrigins: clientUrls,
       dailyBudgetUsd: parseDailyBudget(process.env.USER_DAILY_BUDGET_USD),
       claimLegacyData: process.env.AUTH_CLAIM_LEGACY_DATA === 'true',
+    },
+    demo: {
+      enabled: process.env.DEMO_ENABLED !== 'false',
+      templateEmail:
+        process.env.DEMO_TEMPLATE_EMAIL?.trim().toLowerCase() || null,
+      guestTtlHours: parsePositiveInt(process.env.DEMO_GUEST_TTL_HOURS, 24),
+      guestDailyBudgetUsd: parseDailyBudget(
+        process.env.DEMO_GUEST_DAILY_BUDGET_USD,
+        DEFAULT_GUEST_DAILY_BUDGET_USD,
+      ),
+      totalDailyBudgetUsd: parseDailyBudget(
+        process.env.DEMO_TOTAL_DAILY_BUDGET_USD,
+        DEFAULT_TOTAL_GUEST_DAILY_BUDGET_USD,
+      ),
+      maxGuestsPerDay: parsePositiveInt(
+        process.env.DEMO_MAX_GUESTS_PER_DAY,
+        200,
+      ),
     },
   };
 };

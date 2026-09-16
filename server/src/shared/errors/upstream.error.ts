@@ -84,3 +84,26 @@ export const toUpstreamError = (
   // Provider error bodies can echo the key that was sent.
   return new UpstreamError(service, status, redactSecrets(message));
 };
+
+/**
+ * Circuit-breaker filter for calls on users' own keys: besides 4xx, a rate
+ * limit (429) on one user's key says nothing about the provider's health.
+ */
+export const isNotProviderOutage = (error: unknown): boolean =>
+  isUpstreamClientError(error) || upstreamStatusOf(error) === 429;
+
+/** Upstream error for a call on the user's own key: a rejected key gets an actionable message. */
+export const toUserKeyError = (
+  service: string,
+  error: unknown,
+): UpstreamError => {
+  const upstream = toUpstreamError(service, error);
+  if (upstream.status === 401 || upstream.status === 403) {
+    return new UpstreamError(
+      service,
+      upstream.status,
+      `rejected your API key (HTTP ${upstream.status}). Update or remove it under AI providers.`,
+    );
+  }
+  return upstream;
+};

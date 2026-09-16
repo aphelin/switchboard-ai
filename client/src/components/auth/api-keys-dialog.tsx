@@ -1,11 +1,14 @@
 "use client";
 
 import { useEffect, useState, type FormEvent } from "react";
-import { Check, Copy, KeyRound, Loader2, Trash2 } from "lucide-react";
+import { Check, Copy, KeyRound, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import { authClient, API_ORIGIN } from "@/lib/auth-client";
-import { Button } from "@/components/ui/button";
+import { MCP_SERVER_NAME } from "@/lib/site";
+import { formatStamp } from "@/lib/format";
 import { Input } from "@/components/ui/input";
+import { Spin } from "@/components/tui/spin";
+import { GhostRows } from "@/components/tui/ghost";
 import {
   Dialog,
   DialogContent,
@@ -30,11 +33,11 @@ interface ApiKeysDialogProps {
 
 function formatDate(value: Date | string | null): string {
   if (!value) return "never";
-  return new Date(value).toLocaleString();
+  return formatStamp(new Date(value).toISOString());
 }
 
 export function mcpCommand(key: string): string {
-  return `claude mcp add --transport http mini-ai-toolkit ${API_ORIGIN}/api/mcp --header "x-api-key: ${key}"`;
+  return `claude mcp add --transport http ${MCP_SERVER_NAME} ${API_ORIGIN}/api/mcp --header "x-api-key: ${key}"`;
 }
 
 /**
@@ -113,96 +116,90 @@ export function ApiKeysDialog({ open, onOpenChange }: ApiKeysDialogProps) {
 
   return (
     <Dialog open={open} onOpenChange={handleOpenChange}>
-      <DialogContent className="sm:max-w-lg" data-testid="api-keys-dialog">
+      <DialogContent className="sm:max-w-xl" data-testid="api-keys-dialog">
         <DialogHeader>
-          <DialogTitle className="flex items-center gap-2">
-            <KeyRound className="h-4 w-4" />
+          <DialogTitle>
+            <KeyRound />
             API keys
           </DialogTitle>
           <DialogDescription>
-            Use a key to connect MCP clients such as Claude Code to your toolkit. Keys act as
-            you: they can read your documents and spend your AI budget.
+            A key connects MCP clients such as Claude Code to your toolkit. A key acts as you, so it
+            can read your documents and spend your AI budget.
           </DialogDescription>
         </DialogHeader>
 
         {newKey ? (
-          <div className="space-y-2 rounded-lg border border-primary/30 bg-primary/5 p-3" data-testid="api-key-created">
-            <p className="text-xs font-medium">
-              Copy your key now. It will not be shown again.
-            </p>
+          <div className="flex flex-col gap-3 rounded-[22px] bg-accent/8 p-4 ring-1 ring-accent/30" data-testid="api-key-created">
+            <p className="font-bold text-accent-2">Copy the key now. It is not shown again.</p>
             <CopyField value={newKey} testId="api-key-value" />
-            <p className="text-xs text-muted-foreground">Connect Claude Code:</p>
+            <p className="text-sm text-dim">Connect Claude Code:</p>
             <CopyField value={mcpCommand(newKey)} testId="api-key-command" multiline />
-            <Button variant="outline" size="sm" onClick={() => setNewKey(null)}>
-              Done
-            </Button>
+            <div>
+              <button type="button" className="btn btn-glass btn-sm" onClick={() => setNewKey(null)}>
+                Done
+              </button>
+            </div>
           </div>
         ) : (
           <form className="flex gap-2" onSubmit={handleCreate}>
             <Input
               placeholder="Key name, e.g. Claude Code laptop"
+              aria-label="Key name"
               value={name}
               maxLength={64}
               onChange={(e) => setName(e.target.value)}
               data-testid="api-key-name"
             />
-            <Button type="submit" disabled={creating || !name.trim()} data-testid="api-key-create">
-              {creating && <Loader2 className="h-4 w-4 animate-spin" />}
+            <button type="submit" className="btn btn-primary" disabled={creating || !name.trim()} data-testid="api-key-create">
+              {creating ? <Spin /> : null}
               Create
-            </Button>
+            </button>
           </form>
         )}
 
-        <div className="max-h-72 space-y-2 overflow-y-auto" data-testid="api-key-list">
+        <div className="max-h-80 overflow-y-auto" data-testid="api-key-list">
           {loading && keys.length === 0 ? (
-            <p className="flex items-center gap-2 text-xs text-muted-foreground">
-              <Loader2 className="h-3 w-3 animate-spin" /> Loading keys…
-            </p>
+            <GhostRows rows={2} />
           ) : keys.length === 0 ? (
-            <p className="text-xs text-muted-foreground">No API keys yet.</p>
+            <GhostRows rows={2} label="No API keys yet" />
           ) : (
-            keys.map((key) => (
-              <div
-                key={key.id}
-                className="flex items-center justify-between gap-3 rounded-lg border px-3 py-2"
-              >
-                <div className="min-w-0">
-                  <p className="truncate text-sm font-medium">{key.name || "Unnamed key"}</p>
-                  <p className="truncate text-xs text-muted-foreground">
-                    <span className="font-mono">{key.start ? `${key.start}…` : "••••"}</span>
-                    {" · created "}
-                    {formatDate(key.createdAt)}
-                    {" · last used "}
-                    {formatDate(key.lastRequest)}
-                  </p>
-                </div>
-                {confirmingId === key.id ? (
-                  <div className="flex shrink-0 gap-1">
-                    <Button
-                      variant="destructive"
-                      size="xs"
-                      disabled={deletingId === key.id}
-                      onClick={() => void handleDelete(key.id)}
-                    >
-                      {deletingId === key.id ? <Loader2 className="h-3 w-3 animate-spin" /> : "Delete"}
-                    </Button>
-                    <Button variant="ghost" size="xs" onClick={() => setConfirmingId(null)}>
-                      Cancel
-                    </Button>
+            <ul className="flex flex-col gap-1">
+              {keys.map((key) => (
+                <li key={key.id} className="flex items-center justify-between gap-4 rounded-2xl px-3 py-2.5 hover:bg-white/6">
+                  <div className="min-w-0">
+                    <p className="truncate font-semibold">{key.name || "Unnamed key"}</p>
+                    <p className="truncate text-xs text-dim">
+                      {key.start ? `${key.start}…` : "••••"} · created {formatDate(key.createdAt)} · last used{" "}
+                      {formatDate(key.lastRequest)}
+                    </p>
                   </div>
-                ) : (
-                  <Button
-                    variant="ghost"
-                    size="icon-sm"
-                    className="shrink-0 text-muted-foreground hover:text-destructive"
-                    aria-label={`Delete ${key.name ?? "key"}`}
-                    onClick={() => setConfirmingId(key.id)}
-                  >
-                    <Trash2 className="h-3.5 w-3.5" />
-                  </Button>
-                )}
-              </div>
-            ))
+                  {confirmingId === key.id ? (
+                    <div className="flex shrink-0 gap-1">
+                      <button
+                        type="button"
+                        className="btn btn-danger btn-xs"
+                        disabled={deletingId === key.id}
+                        onClick={() => void handleDelete(key.id)}
+                      >
+                        {deletingId === key.id ? <Spin /> : "Delete"}
+                      </button>
+                      <button type="button" className="btn btn-ghost btn-xs" onClick={() => setConfirmingId(null)}>
+                        Cancel
+                      </button>
+                    </div>
+                  ) : (
+                    <button
+                      type="button"
+                      className="btn btn-ghost btn-icon btn-sm shrink-0 hover:text-err"
+                      aria-label={`Delete ${key.name ?? "key"}`}
+                      onClick={() => setConfirmingId(key.id)}
+                    >
+                      <Trash2 />
+                    </button>
+                  )}
+                </li>
+              ))}
+            </ul>
           )}
         </div>
       </DialogContent>
@@ -238,7 +235,7 @@ function CopyField({
           readOnly
           value={value}
           rows={3}
-          className="min-w-0 flex-1 resize-none rounded-md border bg-background px-2 py-1.5 font-mono text-[11px] break-all"
+          className="field field-area field-data min-h-0 flex-1 resize-none rounded-[20px] break-all text-xs"
           onFocus={(e) => e.currentTarget.select()}
           data-testid={testId}
         />
@@ -246,20 +243,14 @@ function CopyField({
         <Input
           readOnly
           value={value}
-          className="min-w-0 flex-1 font-mono text-xs"
+          className="field-data flex-1"
           onFocus={(e) => e.currentTarget.select()}
           data-testid={testId}
         />
       )}
-      <Button
-        type="button"
-        variant="outline"
-        size="icon-sm"
-        aria-label="Copy"
-        onClick={() => void copy()}
-      >
-        {copied ? <Check className="h-3.5 w-3.5" /> : <Copy className="h-3.5 w-3.5" />}
-      </Button>
+      <button type="button" className="btn btn-glass btn-icon" aria-label="Copy" onClick={() => void copy()}>
+        {copied ? <Check /> : <Copy />}
+      </button>
     </div>
   );
 }

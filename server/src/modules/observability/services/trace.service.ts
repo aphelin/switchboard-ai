@@ -2,6 +2,7 @@ import { Injectable, Logger } from '@nestjs/common';
 import { PrismaService } from '../../../prisma/prisma.service';
 import { Prisma } from 'generated/prisma/client';
 import type { KeySource } from '../../llm/types/llm.types';
+import type { TraceSortField } from '../dto/query-traces.dto';
 
 export interface RecordLlmCallInput {
   name: string;
@@ -26,6 +27,8 @@ export interface TraceListParams {
   userId: string;
   traceId?: string;
   name?: string;
+  sort?: TraceSortField;
+  order?: 'asc' | 'desc';
   page: number;
   limit: number;
 }
@@ -65,10 +68,20 @@ export class TraceService {
     if (traceId) where.traceId = traceId;
     if (name) where.name = name;
 
+    const sort = params.sort ?? 'createdAt';
+    const order = params.order ?? 'desc';
+    // Unpriced calls and calls without token counts sort last either way; newest breaks ties so pages are stable.
+    const nullable = sort === 'costUsd' || sort === 'inputTokens';
+    const orderBy: Prisma.LlmCallOrderByWithRelationInput[] = [
+      nullable ? { [sort]: { sort: order, nulls: 'last' } } : { [sort]: order },
+      ...(sort === 'createdAt' ? [] : [{ createdAt: 'desc' as const }]),
+      { id: 'desc' },
+    ];
+
     const [data, total] = await Promise.all([
       this.prisma.llmCall.findMany({
         where,
-        orderBy: { createdAt: 'desc' },
+        orderBy,
         skip: (page - 1) * limit,
         take: limit,
       }),

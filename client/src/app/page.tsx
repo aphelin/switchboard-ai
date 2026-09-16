@@ -2,14 +2,9 @@ import type { Metadata } from 'next';
 import { HomeView } from '@/components/home-view';
 
 export const metadata: Metadata = {
-  title: 'Mini AI Toolkit',
+  title: 'Generate',
   description:
-    'Generate AI images and text through a prompt-based interface with async job processing and priority queuing.',
-  openGraph: {
-    title: 'Mini AI Toolkit — AI Image & Text Generator',
-    description:
-      'Generate AI images and text through a prompt-based interface with async job processing and priority queuing.',
-  },
+    'Queue an image or text generation with a priority, watch it run over a live stream, and pick the model it runs on.',
 };
 
 export default function HomePage() {

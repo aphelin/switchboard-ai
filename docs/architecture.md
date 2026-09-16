@@ -1,6 +1,6 @@
 # Architecture and Design Notes
 
-This document explains how the AI features of Mini AI Toolkit work, why they are built the way they are, and what the trade-offs are. It is written to be read before an interview: every section ends with the questions you should be able to answer about it.
+This document explains how the AI features of Switchboard AI work, why they are built the way they are, and what the trade-offs are. It is written to be read before an interview: every section ends with the questions you should be able to answer about it.
 
 Companion documents: [`ai-engineering-roadmap.md`](./ai-engineering-roadmap.md) (why these features, cost notes, landscape) and the main [README](../README.md) (setup and API reference).
 
@@ -119,8 +119,8 @@ Search modes (`hybrid` | `vector` | `keyword`) are exposed on `POST /api/documen
 `POST /api/chat` receives the AI SDK `useChat` payload (conversation id, UI messages, optional `documentIds` scope). `ChatService.stream`:
 
 1. Validates the messages (`validateUIMessages`) and trims history to the last 24 messages, always starting at a user message (`utils/history.ts`).
-2. Builds the tools for this request (`tools/chat-tools.ts`), each a thin Zod-typed wrapper over an existing service: `search_documents`, `list_documents`, `list_generations`, `get_generation`, `generate_image`.
-3. Calls `streamText` with the system prompt, the tools, `stopWhen: isStepCount(6)` (hard cap on model↔tool round-trips) and `toolApproval: { generate_image: 'user-approval' }`.
+2. Builds the tools for this request (`tools/chat-tools.ts`), each a thin Zod-typed wrapper over an existing service: `search_documents`, `list_documents`, `list_generations`, `get_generation`, `generate_image`, `edit_image`.
+3. Calls `streamText` with the system prompt, the tools, `stopWhen: isStepCount(6)` (hard cap on model↔tool round-trips) and `toolApproval: { generate_image: 'user-approval', edit_image: 'user-approval' }`. Images the user attached arrive as `file` parts with data URLs; `ChatAttachmentsService` moves the bytes to storage and leaves an API URL in the persisted message, then inlines them again as data URLs for the model only (the provider cannot fetch a URL behind the user's session).
 4. Streams UI message chunks (text deltas, tool inputs/outputs, approval requests) to the browser; on finish, persists the messages (upsert by id) and generates a title with the fast model.
 
 ### Human in the loop
@@ -177,7 +177,7 @@ This is enough to answer the operational questions (cost per feature, error rate
 See `server/evals/`. The harness ingests fixed fictional documents (so answers cannot come from model memory), then measures:
 
 - **Retrieval**: hit@k and MRR against the expected document, which is deterministic and free (local embeddings), so it runs on every CI push.
-- **Generation**: an LLM-as-judge scores correctness and faithfulness against the retrieved sources; deterministic checks verify expected keywords, forbidden strings (the injection test must never produce `PWNED`) and abstention on unanswerable questions.
+- **Generation**: an LLM-as-judge scores correctness and faithfulness against the retrieved sources; deterministic checks verify expected keywords, forbidden strings (the injection test must never produce `PWNED`) and abstention on unanswerable questions. CI skips this half unless `POLLINATIONS_API_KEY` is set.
 
 Thresholds live in `evals/config.ts`; a drop fails the run (and CI). The judge prompt is versioned like the assistant prompt, because changing the judge changes the numbers.
 
@@ -197,7 +197,7 @@ The toolkit is also exposed as an MCP server over Streamable HTTP (`POST /api/mc
 
 - **Better Auth runs inside the API** at `/api/auth/*`. It is mounted on Express before the JSON body parser (it reads the raw body) and stores users, sessions, accounts and API keys in Postgres through the Prisma adapter. Auth lives in the API rather than in Next.js because MCP clients never go through the frontend.
 - **Database sessions, no JWTs.** The browser holds an httpOnly cookie that references a `session` row. Sessions last 7 days and are extended when used (at most once a day). Sign-out deletes the row, so revocation is immediate. There are no refresh tokens: they exist to make up for JWTs that cannot be revoked.
-- **One global guard.** `AuthGuard` protects every route unless it is marked `@Public()` (only `/api/health`). It calls Better Auth's `getSession`, which accepts the session cookie or an API key (`x-api-key`, or `Authorization: Bearer mat_…`). Controllers get the user from `@CurrentUser()`.
+- **One global guard.** `AuthGuard` protects every route unless it is marked `@Public()` (only `/api/health` and `/api/demo`). It calls Better Auth's `getSession`, which accepts the session cookie or an API key (`x-api-key`, or `Authorization: Bearer mat_…`). Controllers get the user from `@CurrentUser()`.
 - **API keys for MCP.** Created in the UI and shown once, stored hashed, prefixed `mat_` so leaked keys are easy to spot, revocable one by one.
 
 ### Where the user id is enforced
@@ -215,7 +215,18 @@ The toolkit is also exposed as an MCP server over Streamable HTTP (`POST /api/mc
 
 ### Cost control
 
-Sign-up is open, so the provider balance is protected per user. Before a costly call (chat turn, RAG answer, text generation, prompt enhancement) `BudgetService` sums today's `LlmCall.costUsd` for the user and returns **429 "Budget Exceeded"** once `USER_DAILY_BUDGET_USD` is reached. It is a soft cap: requests already in flight can overshoot by their own cost; a hard cap would need reservations. Rate limits are tracked per user (`UserThrottlerGuard` runs after `AuthGuard`) instead of per IP.
+Sign-up is open, so the provider balance is protected per user. Before a costly call (chat turn, RAG answer, text generation, prompt enhancement, image generation on an included model) `BudgetService` sums today's `LlmCall.costUsd` for the user and returns **429 "Budget Exceeded"** once `USER_DAILY_BUDGET_USD` is reached. It is a soft cap: requests already in flight can overshoot by their own cost; a hard cap would need reservations. Rate limits are tracked per user (`UserThrottlerGuard` runs after `AuthGuard`) instead of per IP.
+
+### Guest demo sessions
+
+Interviewers won't create an account to look at a portfolio, so the landing page opens a guest session in one click.
+
+- **Guests are real users.** Better Auth's anonymous plugin creates a `user` row with `isAnonymous` and a session cookie; no password, placeholder email on `.invalid`. Everything downstream (guards, `userId` filters, SSE scoping, traces) treats a guest like any account, so there is no second code path to secure. `AuthUser.isGuest` carries the flag to controllers.
+- **Filled before the response.** A Better Auth `after` hook on `/sign-in/anonymous` awaits `DemoTemplateService.copyInto` before the cookie reaches the browser, so the app opens with data in place. It copies the template account's completed generations, ready documents, conversations and the `LlmCall` rows behind them, all with new ids. Chunks and their vectors are copied with one `INSERT … SELECT` inside Postgres instead of re-embedding; their new ids are chosen in code so search results inside copied messages can be rewritten too. Ids inside JSON (tool outputs, message metadata, image URLs) are rewritten to point at the copies; the image file itself is shared with the template (`parameters.storageKey` is left alone). A failed copy is logged and the guest starts empty.
+- **Real, not mocked.** The template is a normal account filled through the API by `npm run demo:seed` (real queue, real embeddings, real agent turns on the included models), so the traces a guest reads are calls that happened. Copied `LlmCall` rows keep their timestamps and carry `copiedFromId`, which the budget ignores.
+- **Only free models, never anyone's key.** `PUT /api/providers/:provider/key` returns 403 for guests and `GET /api/providers` reports `byokDisabledReason: "guest"`; a `before` hook rejects `/api-key/create`, since an MCP key would outlive the guest.
+- **Cost and abuse, layered.** Per-IP: Better Auth's rate limiter allows 5 guest sign-ins an hour (it runs in production). Per day: `DEMO_MAX_GUESTS_PER_DAY` is checked in the same `before` hook. Per guest: `DEMO_GUEST_DAILY_BUDGET_USD`. All guests: `DEMO_TOTAL_DAILY_BUDGET_USD`, summed over `LlmCall` rows whose user is anonymous, protects the shared platform key even if many guests stay under their own limit. Plus the per-user throttler that everyone has.
+- **Expiry.** A BullMQ job scheduler (`demo-queue`, every 15 minutes) deletes guests older than `DEMO_GUEST_TTL_HOURS` in batches; rows go by cascade, then image files are deleted unless another generation still points at them. A scheduler rather than `setInterval`, so several API instances still sweep once per interval.
 
 ### Migrating existing data (expand/contract)
 
@@ -224,7 +235,8 @@ Rows created before auth have no owner, so `userId` is nullable for now (expand)
 ### How it is tested
 
 - `npm run test:auth`: two users against a running API, 29 checks. Protected routes return 401. Bob gets 404 or empty results for Alice's documents, chunks, searches (even when naming her document id) and traces. API keys work in both headers and bad keys get 401. Bob gets 403 posting into Alice's conversation. Sign-out invalidates the session.
-- Unit tests for API-key extraction and budget math; `npm run mcp:smoke` authenticates with an API key.
+- `npm run test:demo`: guest sessions against a running API, no LLM calls. `/api/demo` is public, a guest is marked with its expiry and demo budget, can't open a second guest session, gets 403 for provider keys and API keys, and a second guest gets 404 for the first one's document. Sign-out ends the session.
+- Unit tests for API-key extraction, budget math, guest expiry and the id rewriting used when copying the template; `npm run mcp:smoke` authenticates with an API key.
 
 ### Questions to be ready for
 
@@ -233,6 +245,9 @@ Rows created before auth have no owner, so `userId` is nullable for now (expand)
 - Why 404 instead of 403 for another user's document? (It doesn't confirm the id exists. Conversation writes are the exception, because a silent 404 on POST would look like a bug.)
 - Where would a missing `userId` filter hurt most? (Retrieval: the model would quote another user's data inside a normal-looking answer.)
 - How does the agent know who the user is? (From the session, captured when the tools are built; never from a model-controlled argument.)
+- Why anonymous users instead of a shared demo login? (A shared login lets visitors see and delete each other's work, and one person can exhaust its budget for everyone. Separate guests reuse the tenant isolation that already exists, and show it working.)
+- Why copy the template instead of seeding each guest through the pipeline? (Seeding would queue images and LLM calls on every visit: slow, costly, and at the mercy of the provider. The copy is one transaction of a few hundred rows; the vectors never leave Postgres.)
+- What stops someone from scripting thousands of guests? (Per-IP rate limit, a daily cap on new guests, and a shared daily budget for all guests, which bounds the worst case in dollars even if the other limits are bypassed with many IPs.)
 - Cookies across ports and domains? (`localhost:3000` → `localhost:4000` is same-site. In production use subdomains of one domain, or proxy the API through the frontend domain, because Safari blocks third-party cookies.)
 
 ---
@@ -245,6 +260,7 @@ Rows created before auth have no owner, so `userId` is nullable for now (expand)
 - **Native providers, not a shim.** Each vendor goes through its own AI SDK package (`@ai-sdk/openai` on the Responses API, `@ai-sdk/anthropic`, `@ai-sdk/google`), so tool calling, structured output and caching use each API directly. Claude chats mark the system prompt as a cache breakpoint (tools and instructions are cached, read at a tenth of the input price), and Claude Opus 5 has server-side refusal fallback enabled. Some differences the SDKs absorb: Opus 5, Sonnet 5 and GPT-5.x reasoning models reject `temperature`, so it is dropped with a warning.
 - **Routing per request.** The browser sends a catalog id (`anthropic:claude-sonnet-5`). `ModelRouterService.resolve(userId, model, { tools })` turns it into a `ModelRoute` or rejects it: unknown ids and platform models that are not offered return 400 `Unknown Model` (otherwise any raw id would reach the platform provider on the app's bill), and a provider without a stored key returns 400 `Provider Key Required`. This happens before anything is queued and before the budget check. Generation workers resolve the model again, so a key removed while a job waited is not used.
 - **Where a call runs.** Inside `LlmService` a route becomes one or more *call targets* (provider, model, breaker, who pays). The platform route has a primary and an optional fallback target. A user-key route has exactly one: a failed call is never retried on another vendor or on the app's key, because that would change who pays and who sees the data. User-key calls get one breaker per vendor, and unlike the platform breakers it ignores 429s: one user's rate limit says nothing about the vendor's health.
+- **Image models.** Images follow the same rules through `ModelRouterService.resolveImage` and `ImageGenerationService`. Included models come from Pollinations' live `GET /image/models`: the hardcoded list it replaced had gone stale (`seedream` now returns 402, `flux-2-dev` 400). Only official models with a per-image price of at most $0.01 are included. The app pays for included models and users deposit nothing, so a model whose cost is unknown up front (token-priced, like GPT Image 2) could not be capped by the budget, and a $0.04 model would burn it 20 times faster than FLUX; community models are third-party proxies that would see users' prompts. Premium models are what users' own keys are for. Nano Banana Pro / 2 / 2 Lite run on the user's Google key through `generateImage` from the AI SDK; Gemini takes an aspect ratio rather than pixel sizes, so the closest supported ratio is picked, and the negative prompt becomes a plain-language "Avoid:" line. Image calls are traced like LLM calls (`generation.image`, per-image price, `keySource`), which also means included images now count toward the daily budget. Generations store the catalog id, and bare ids on older rows (`flux`) still resolve, so retries keep working.
 - **Cost.** Every trace has `keySource` (`platform` | `user`). The budget sums only platform spend; `/api/me` reports own-key spend separately; the Traces page marks "your key". Catalog prices are keyed by catalog id, so they never collide with the Pollinations price table loaded at startup.
 
 ### Key storage
@@ -292,7 +308,9 @@ In production the encryption key would come from a KMS (envelope encryption: a d
 | Native AI SDK provider per vendor | OpenAI-compatible endpoints for everyone | Tool calling, structured output and prompt caching work as each vendor designed them. |
 | AES-256-GCM with per-row associated data, key from env | KMS / Vault | No extra infrastructure locally; `SecretBox` is where envelope encryption would plug in. |
 | No fallback on user-key calls | Retry on the platform provider | Who pays and who sees the data must not change silently. |
+| Anonymous guest per visitor, copied from a template account | Shared demo login, or read-only fixtures | Isolation comes for free, visitors can use every feature, and the data is real history rather than invented rows. |
+| Copied traces flagged with `copiedFromId` | Shift their timestamps, or skip copying traces | Timestamps stay truthful and the Traces page isn't empty; the budget simply ignores flagged rows. |
 
-Known gaps, deliberately left: password reset and email verification, roles and document sharing, the contract step for `userId`, conversation summarisation, S3 storage, hosted tracing, migrations, reranking model, KMS-backed key encryption and a key-rotation job, image generation on users' OpenAI keys, cross-model eval comparison.
+Known gaps, deliberately left: turning a guest into an account in place (guests sign out and sign up; their data is not carried over), password reset and email verification, roles and document sharing, the contract step for `userId`, conversation summarisation, S3 storage, hosted tracing, migrations, reranking model, KMS-backed key encryption and a key-rotation job, image generation on users' OpenAI keys, cross-model eval comparison.
 
 One more worth knowing: the SSE event bus is **in-process**. With a single API process (the default) that is fine; if workers ever run as separate processes (e.g. the eval runner, or a scaled-out deployment), their status events never reach the API's SSE endpoints and the UI falls back to polling. The fix is a Redis pub/sub bridge behind `SseService`, which BullMQ's Redis already makes cheap.

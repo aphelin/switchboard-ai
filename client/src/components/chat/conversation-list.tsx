@@ -1,8 +1,8 @@
 "use client";
 
-import { Plus, Trash2, MessageSquare } from "lucide-react";
-import { Button } from "@/components/ui/button";
-import { Skeleton } from "@/components/ui/skeleton";
+import { Plus, Trash2 } from "lucide-react";
+import { GhostRows } from "@/components/tui/ghost";
+import { relativeTime } from "@/lib/format";
 import { cn } from "@/lib/utils";
 import type { ConversationSummary } from "@/lib/types";
 
@@ -15,45 +15,22 @@ interface ConversationListProps {
   onDelete: (id: string) => void;
 }
 
-function relativeTime(iso: string): string {
-  const diff = Date.now() - new Date(iso).getTime();
-  const minutes = Math.round(diff / 60000);
-  if (minutes < 1) return "just now";
-  if (minutes < 60) return `${minutes}m ago`;
-  const hours = Math.round(minutes / 60);
-  if (hours < 24) return `${hours}h ago`;
-  return new Date(iso).toLocaleDateString();
-}
-
-export function ConversationList({
-  conversations,
-  activeId,
-  loading,
-  onSelect,
-  onNew,
-  onDelete,
-}: ConversationListProps) {
+/** Past conversations as rounded rows; the active one is a dark pill. */
+export function ConversationList({ conversations, activeId, loading, onSelect, onNew, onDelete }: ConversationListProps) {
   return (
     <div className="flex h-full min-h-0 flex-col">
-      <div className="border-b p-3">
-        <Button className="w-full gap-2" size="sm" onClick={onNew} data-testid="new-conversation">
-          <Plus className="h-4 w-4" />
-          New chat
-        </Button>
+      <div className="px-4 pt-3 pb-2">
+        <button type="button" className="btn btn-primary w-full" onClick={onNew} data-testid="new-conversation">
+          <Plus /> New chat
+        </button>
       </div>
-      <div className="min-h-0 flex-1 overflow-y-auto p-2">
+      <div className="min-h-0 flex-1 overflow-y-auto px-3 pb-3">
         {loading ? (
-          <div className="space-y-2">
-            {[1, 2, 3].map((i) => (
-              <Skeleton key={i} className="h-12 w-full" />
-            ))}
-          </div>
+          <div className="px-1 pt-1"><GhostRows rows={4} /></div>
         ) : conversations.length === 0 ? (
-          <p className="p-3 text-center text-xs text-muted-foreground">
-            No conversations yet.
-          </p>
+          <div className="px-1 pt-1"><GhostRows rows={3} label="No conversations yet" /></div>
         ) : (
-          <ul className="space-y-1" data-testid="conversation-list">
+          <ul className="flex flex-col gap-1" data-testid="conversation-list">
             {conversations.map((conversation) => {
               const active = conversation.id === activeId;
               return (
@@ -61,29 +38,23 @@ export function ConversationList({
                   <button
                     type="button"
                     onClick={() => onSelect(conversation.id)}
-                    className={cn(
-                      "flex w-full flex-col gap-0.5 rounded-lg px-3 py-2 pr-8 text-left transition-colors hover:bg-muted",
-                      active && "bg-secondary",
-                    )}
+                    aria-current={active ? "true" : undefined}
+                    className={cn("flex w-full flex-col rounded-2xl px-3.5 py-2.5 pr-11 text-left transition-colors hover:bg-white/8", active && "bg-white text-ground shadow-pill hover:bg-white")}
                   >
-                    <span className="flex items-center gap-1.5 text-sm font-medium">
-                      <MessageSquare className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
-                      <span className="truncate">{conversation.title ?? "Untitled"}</span>
-                    </span>
-                    <span className="text-xs text-muted-foreground">
-                      {conversation.messageCount} message{conversation.messageCount === 1 ? "" : "s"} &middot;{" "}
-                      {relativeTime(conversation.updatedAt)}
+                    <span className="truncate font-semibold">{conversation.title ?? "Untitled"}</span>
+                    <span className={cn("truncate text-xs", active ? "text-ground/60" : "text-dim")}>
+                      {conversation.messageCount} message{conversation.messageCount === 1 ? "" : "s"} · {relativeTime(conversation.updatedAt)}
                     </span>
                   </button>
-                  <Button
-                    variant="ghost"
-                    size="icon"
-                    className="absolute right-1 top-1.5 h-6 w-6 text-muted-foreground opacity-0 hover:text-destructive focus-visible:opacity-100 group-hover:opacity-100"
+                  <button
+                    type="button"
+                    className={cn("btn btn-ghost btn-icon btn-xs absolute top-1/2 right-2 -translate-y-1/2 opacity-0 group-hover:opacity-100 focus-visible:opacity-100", active && "text-ground hover:bg-ground/10 hover:text-ground")}
                     title="Delete conversation"
+                    aria-label={`Delete ${conversation.title ?? "conversation"}`}
                     onClick={() => onDelete(conversation.id)}
                   >
-                    <Trash2 className="h-3.5 w-3.5" />
-                  </Button>
+                    <Trash2 />
+                  </button>
                 </li>
               );
             })}

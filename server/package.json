@@ -26,7 +26,9 @@
     "mcp:smoke": "tsx evals/mcp-smoke.ts",
     "eval:retrieval": "npm run eval -- --retrieval-only",
     "test:auth": "tsx evals/auth-isolation.ts",
-    "test:providers": "tsx evals/providers-isolation.ts"
+    "test:providers": "tsx evals/providers-isolation.ts",
+    "test:demo": "tsx evals/demo-guest.ts",
+    "demo:seed": "tsx scripts/seed-demo.ts"
   },
   "dependencies": {
     "@ai-sdk/anthropic": "^4.0.53",

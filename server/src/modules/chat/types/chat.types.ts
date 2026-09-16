@@ -32,6 +32,13 @@ export interface SearchToolOutput {
   passages: SourcePassage[];
 }
 
+/** A recording turned into text, with what the provider billed for it. */
+export interface TranscriptionResult {
+  text: string;
+  seconds: number;
+  costUsd: number | null;
+}
+
 export interface AnswerParams {
   /** Owner whose documents are searched and whose budget is charged. */
   userId: string;

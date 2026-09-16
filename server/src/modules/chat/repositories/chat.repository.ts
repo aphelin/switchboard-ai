@@ -78,8 +78,20 @@ export class ChatRepository {
   ): Promise<void> {
     if (messages.length === 0) return;
 
+    // Message ids come from the browser. An id already stored in another conversation
+    // (possibly another user's) must not be overwritten, so those messages are skipped.
+    const foreign = await this.prisma.message.findMany({
+      where: {
+        id: { in: messages.map((message) => message.id) },
+        conversationId: { not: conversationId },
+      },
+      select: { id: true },
+    });
+    const foreignIds = new Set(foreign.map((message) => message.id));
+    const own = messages.filter((message) => !foreignIds.has(message.id));
+
     await this.prisma.$transaction([
-      ...messages.map((message) =>
+      ...own.map((message) =>
         this.prisma.message.upsert({
           where: { id: message.id },
           create: {

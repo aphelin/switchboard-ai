@@ -1,118 +1,88 @@
 'use client';
 
 import { useSearchParams, useRouter } from 'next/navigation';
-import { useCallback } from 'react';
+import { useCallback, useState } from 'react';
+import { toast } from 'sonner';
 import { useGenerations } from '@/hooks/use-generations';
 import { useSSE } from '@/hooks/use-sse';
-import { GenerationCard } from './generation-card';
-import { Button } from '@/components/ui/button';
-import { Skeleton } from '@/components/ui/skeleton';
-import { ImageIcon, ChevronLeft, ChevronRight } from 'lucide-react';
+import { GenerationCard, GenerationDetailDialog } from './generation-card';
+import { PageHeading } from '@/components/layout/page-heading';
+import { GhostRows } from '@/components/tui/ghost';
+import { Pager } from '@/components/tui/pager';
+import { Stagger, StaggerItem } from '@/components/motion/reveal';
+import { deleteGeneration } from '@/lib/api';
 import { GenerationType, JobStatus } from '@/lib/constants';
+import type { Generation } from '@/lib/types';
 
 const GALLERY_LIMIT = 12;
 
+/** Window 1: completed images as a wall of glass tiles; a tile opens a viewer that browses the page. */
 export function GalleryGrid() {
   const searchParams = useSearchParams();
   const router = useRouter();
   const page = Number(searchParams.get('page')) || 1;
+  const [open, setOpen] = useState<Generation | null>(null);
 
-  const setPage = useCallback(
-    (newPage: number) => {
-      const params = new URLSearchParams(searchParams.toString());
-      if (newPage <= 1) {
-        params.delete('page');
-      } else {
-        params.set('page', String(newPage));
-      }
-      const qs = params.toString();
-      router.push(qs ? `?${qs}` : '', { scroll: false });
-    },
-    [searchParams, router],
-  );
+  const setPage = useCallback((newPage: number) => {
+    const params = new URLSearchParams(searchParams.toString());
+    if (newPage <= 1) params.delete('page'); else params.set('page', String(newPage));
+    const qs = params.toString();
+    router.push(qs ? `?${qs}` : '', { scroll: false });
+  }, [searchParams, router]);
 
-  const { result, loading, error, handleSSEEvent, refetch } = useGenerations({
-    type: GenerationType.IMAGE,
-    status: JobStatus.COMPLETED,
-    limit: GALLERY_LIMIT,
-    page,
-  });
+  const { result, loading, error, handleSSEEvent, refetch, removeLocal } = useGenerations({ type: GenerationType.IMAGE, status: JobStatus.COMPLETED, limit: GALLERY_LIMIT, page });
 
   useSSE((event) => {
     handleSSEEvent(event);
-    if (event.status === JobStatus.COMPLETED) {
-      refetch();
-    }
+    if (event.status === JobStatus.COMPLETED) refetch();
   }, refetch);
 
-  if (loading) {
-    return (
-      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
-        {Array.from({ length: 6 }).map((_, i) => (
-          <Skeleton key={i} className="aspect-square rounded-lg" />
-        ))}
-      </div>
-    );
-  }
+  const items = result?.data ?? [];
 
-  if (error) {
-    return (
-      <div className="flex flex-col items-center gap-2 py-12 text-center">
-        <p className="text-sm text-destructive">{error}</p>
-        <Button variant="link" size="sm" onClick={refetch}>
-          Try again
-        </Button>
-      </div>
-    );
-  }
-
-  if (!result?.data.length) {
-    return (
-      <div className="flex flex-col items-center gap-3 py-16 text-center">
-        <ImageIcon className="h-12 w-12 text-muted-foreground/50" />
-        <div>
-          <p className="font-medium">No images yet</p>
-          <p className="text-sm text-muted-foreground">
-            Generate some images and they&apos;ll appear here.
-          </p>
-        </div>
-      </div>
-    );
-  }
+  // After a delete the viewer moves to the next image (or the previous one at the end) instead of closing.
+  const handleDelete = async (generation: Generation) => {
+    const index = items.findIndex((item) => item.id === generation.id);
+    const neighbour = items[index + 1] ?? items[index - 1] ?? null;
+    try {
+      await deleteGeneration(generation.id);
+      removeLocal(generation.id);
+      setOpen(neighbour);
+      toast.success('Image deleted');
+      if (items.length === 1 && page > 1) setPage(page - 1);
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Delete failed');
+    }
+  };
 
   return (
     <>
-      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
-        {result.data.map((gen) => (
-          <GenerationCard key={gen.id} generation={gen} />
-        ))}
-      </div>
-
-      {result.totalPages > 1 && (
-        <div className="flex items-center justify-center gap-2 pt-4">
-          <Button
-            variant="outline"
-            size="sm"
-            disabled={page === 1}
-            onClick={() => setPage(page - 1)}
-          >
-            <ChevronLeft className="h-4 w-4" />
-            Previous
-          </Button>
-          <span className="text-sm text-muted-foreground">
-            Page {page} of {result.totalPages}
-          </span>
-          <Button
-            variant="outline"
-            size="sm"
-            disabled={page >= result.totalPages}
-            onClick={() => setPage(page + 1)}
-          >
-            Next
-            <ChevronRight className="h-4 w-4" />
-          </Button>
+      <PageHeading
+        title="Gallery"
+        sub="Every finished image, newest first."
+        aside={result ? <span className="chip chip-sm pointer-events-none">{result.total} image{result.total === 1 ? '' : 's'}</span> : undefined}
+      />
+      {loading && !result ? (
+        <div className="grid grid-cols-2 gap-5 sm:grid-cols-3 lg:grid-cols-4">
+          {Array.from({ length: 8 }).map((_, i) => <div key={i} className="shimmer aspect-[4/5] rounded-[26px]" />)}
         </div>
+      ) : error ? (
+        <div className="glass flex flex-col items-center gap-3 p-10 text-center">
+          <p className="text-err">{error}</p>
+          <button type="button" className="btn btn-sm" onClick={refetch}>Try again</button>
+        </div>
+      ) : !items.length ? (
+        <div className="glass p-8"><GhostRows rows={4} label="No images yet. Generate one in the first window." /></div>
+      ) : (
+        <>
+          <Stagger className="grid grid-cols-2 gap-5 sm:grid-cols-3 lg:grid-cols-4">
+            {items.map((gen) => (
+              <StaggerItem key={gen.id}><GenerationCard generation={gen} onOpen={setOpen} /></StaggerItem>
+            ))}
+          </Stagger>
+          {result && <Pager page={page} totalPages={result.totalPages} onPage={setPage} className="pt-8" />}
+        </>
       )}
+      <GenerationDetailDialog generation={open} onClose={() => setOpen(null)} items={items} onNavigate={setOpen} onDelete={handleDelete} />
     </>
   );
 }

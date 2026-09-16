@@ -15,6 +15,8 @@ export class TraceController {
       userId: user.id,
       traceId: query.traceId,
       name: query.name,
+      sort: query.sort,
+      order: query.order,
       page: query.page ?? 1,
       limit: query.limit ?? 50,
     });

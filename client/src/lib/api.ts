@@ -12,10 +12,13 @@ import type {
   ConversationDetail,
   LlmCall,
   TraceSummary,
+  TraceSortField,
   MeResponse,
+  DemoStatus,
   ProviderId,
   ProvidersResponse,
   SaveProviderKeyResponse,
+  TranscriptionResult,
 } from './types';
 import type { DocumentStatus } from './constants';
 import { ApiError, messageFromBody, type ApiErrorBody } from './api-errors';
@@ -49,6 +52,12 @@ apiClient.interceptors.response.use(
 
 export async function getMe(): Promise<MeResponse> {
   const { data } = await apiClient.get<MeResponse>('/me');
+  return data;
+}
+
+/** Public: whether the one-click demo is open (sign-in itself goes through Better Auth). */
+export async function getDemoStatus(): Promise<DemoStatus> {
+  const { data } = await apiClient.get<DemoStatus>('/demo');
   return data;
 }
 
@@ -118,6 +127,11 @@ export async function cancelGeneration(id: string): Promise<Generation> {
     `/generations/${id}/cancel`,
   );
   return data;
+}
+
+/** Deletes the generation and its stored image (a job still running is cancelled first). */
+export async function deleteGeneration(id: string): Promise<void> {
+  await apiClient.delete(`/generations/${id}`);
 }
 
 export function getSSEUrl(): string {
@@ -231,6 +245,22 @@ export async function deleteConversation(id: string): Promise<void> {
   await apiClient.delete(`/chat/conversations/${id}`);
 }
 
+/** Speech to text for the chat microphone: a short recording in, its transcript out (budgeted and traced). */
+export async function transcribeAudio(
+  audio: Blob,
+  conversationId?: string,
+): Promise<TranscriptionResult> {
+  const form = new FormData();
+  form.append('audio', audio, 'recording');
+  if (conversationId) form.append('conversationId', conversationId);
+  const { data } = await apiClient.post<TranscriptionResult>(
+    '/chat/transcribe',
+    form,
+    { headers: { 'Content-Type': 'multipart/form-data' } },
+  );
+  return data;
+}
+
 // ---------------------------------------------------------------------------
 // Traces
 // ---------------------------------------------------------------------------
@@ -238,6 +268,8 @@ export async function deleteConversation(id: string): Promise<void> {
 export async function getTraces(params?: {
   traceId?: string;
   name?: string;
+  sort?: TraceSortField;
+  order?: 'asc' | 'desc';
   page?: number;
   limit?: number;
 }): Promise<PaginatedResult<LlmCall>> {

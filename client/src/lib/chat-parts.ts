@@ -30,10 +30,18 @@ export const TOOL_NAMES = {
   LIST_GENERATIONS: 'list_generations',
   GET_GENERATION: 'get_generation',
   GENERATE_IMAGE: 'generate_image',
+  EDIT_IMAGE: 'edit_image',
 } as const;
+
+/** An image the user attached to a message. */
+export type ImagePart = UIPart & { type: 'file'; mediaType: string; url: string; filename?: string };
 
 export function isToolPart(part: UIPart): part is UIPart & ToolPartLike {
   return part.type === 'dynamic-tool' || part.type.startsWith('tool-');
+}
+
+export function isImagePart(part: UIPart): part is ImagePart {
+  return part.type === 'file' && part.mediaType.startsWith('image/');
 }
 
 export function toolNameOf(part: ToolPartLike): string {
