@@ -4,6 +4,14 @@ A fullstack AI application: image and text generation with async job processing,
 
 Design notes and interview-oriented explanations live in [`docs/architecture.md`](./docs/architecture.md); the plan and cost notes in [`docs/ai-engineering-roadmap.md`](./docs/ai-engineering-roadmap.md).
 
+![Switchboard AI landing page](./docs/screenshots/landing.jpg)
+
+| Chat agent with citations | Hybrid retrieval with fused ranks |
+| --- | --- |
+| ![Chat answer citing document passages](./docs/screenshots/chat.jpg) | ![Documents page with a hybrid search result](./docs/screenshots/documents.jpg) |
+| **Traces: tokens, cost and latency per call** | **Generate: prompts become queued jobs** |
+| ![Traces page grouped by model and call type](./docs/screenshots/traces.jpg) | ![Generate page with the job queue](./docs/screenshots/home.jpg) |
+
 ---
 
 > **AI Development Session Logs**
