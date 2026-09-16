@@ -4,7 +4,7 @@ export const SESSION_LABEL = 'switchboard-ai';
 export const MCP_SERVER_NAME = 'switchboard-ai';
 export const SITE_DESCRIPTION =
   'An AI workbench that traces and prices every model call and asks before the agent spends. It queues image and text generation, indexes your documents for retrieval, runs a tool-using chat agent with human approval, and exposes the same tools over MCP.';
-export const REPO_URL = 'https://github.com/bernikson/mini-ai-toolkit';
+export const REPO_URL = 'https://github.com/aphelin/switchboard-ai';
 
 export interface SessionWindow {
   /** The key that switches to this window. */

@@ -60,7 +60,7 @@ async function main(): Promise<void> {
 
   console.log(`Connecting to ${MCP_URL}`);
   const client = new Client({
-    name: 'mini-ai-toolkit-smoke',
+    name: 'switchboard-ai-smoke',
     version: '1.0.0',
   });
   const transport = new StreamableHTTPClientTransport(new URL(MCP_URL), {

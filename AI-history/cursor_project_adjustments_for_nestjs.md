@@ -158,7 +158,7 @@ Clean build. Here's a summary of all three changes:
 
 1) Use this docs for setting up nest redis throttler module correctly https://www.npmjs.com/package/@nest-lab/throttler-storage-redis
 2) Move root env files which are related to the server inside server folder
-3) Resolve this issue:  ✘ Container mini-ai-toolkit-server-1   Error dependency server failed to start    
+3) Resolve this issue:  ✘ Container switchboard-ai-server-1   Error dependency server failed to start    
 
 ---
 

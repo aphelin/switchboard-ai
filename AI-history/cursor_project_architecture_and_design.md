@@ -448,7 +448,7 @@ The Button component's base styles use `[&_svg:not([class*='size-'])]:size-4` â€
 
 **User**
 
-Now take a look at all files and check if code, architecture is wrote using bad practises or if there is logic/functionality which does not make sense or does not work @/home/giorgi/Desktop/projects/mini-ai-toolkit/ 
+Now take a look at all files and check if code, architecture is wrote using bad practises or if there is logic/functionality which does not make sense or does not work @/home/giorgi/Desktop/projects/switchboard-ai/ 
 
 ---
 

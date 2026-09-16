@@ -1,4 +1,4 @@
-# Mini AI toolkit project requirements
+# Switchboard AI project requirements
 _Exported on 3/11/2026 at 18:40:22 GMT+4 from Cursor (2.6.18)_
 
 ---
@@ -35,7 +35,7 @@ I was thinking of strategy + factory pattern as well as clean architecture but i
 
 Now I am giving you the additional requirements to take note of
 
-Your Task: Build a "Mini AI Toolkit"
+Your Task: Build a "Switchboard AI"
 Create a fullstack app where users generate AI content (images, text, or any creative media) through a prompt-based interface. The system should handle generation asynchronously and display results in a gallery or feed.
 Mandatory Requirements: • Prompt submission UI • Async job processing — API response must NOT block until generation completes • Job status tracking (pending → generating → completed/failed) • Results display — gallery or feed with completed generations • Generation history — all past generations visible • Error handling — graceful handling of failures, timeouts, invalid prompts • AI integration — real API or mock service (see below)
 AI Integration — pick one: • Real API (bonus points): Any free service — Pollinations.ai (no auth needed),
@@ -182,7 +182,7 @@ All todos are complete. Here's a summary of everything that was built:
 
 ---
 
-**Mini AI Toolkit** -- the full-stack project is now fully scaffolded and builds cleanly.
+**Switchboard AI** -- the full-stack project is now fully scaffolded and builds cleanly.
 
 ### What was created:
 
@@ -214,7 +214,7 @@ All todos are complete. Here's a summary of everything that was built:
 
 **User**
 
-@/home/giorgi/Desktop/projects/mini-ai-toolkit/ Review entire project, all files and check if all requirements are met.
+@/home/giorgi/Desktop/projects/switchboard-ai/ Review entire project, all files and check if all requirements are met.
 
 ---
 

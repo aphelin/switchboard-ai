@@ -67,7 +67,7 @@ jobs:
         env:
           POSTGRES_USER: postgres
           POSTGRES_PASSWORD: postgres
-          POSTGRES_DB: mini_ai_toolkit
+          POSTGRES_DB: switchboard_ai
         ports: ['5432:5432']
         options: >-
           --health-cmd "pg_isready -U postgres"
@@ -83,7 +83,7 @@ jobs:
           --health-timeout 5s
           --health-retries 10
     env:
-      DATABASE_URL: postgresql://postgres:postgres@localhost:5432/mini_ai_toolkit?schema=public
+      DATABASE_URL: postgresql://postgres:postgres@localhost:5432/switchboard_ai?schema=public
       REDIS_HOST: localhost
       REDIS_PORT: 6379
       # Without a real key the run stays free: retrieval metrics only (local embeddings).

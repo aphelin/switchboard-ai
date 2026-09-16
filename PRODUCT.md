@@ -40,7 +40,7 @@ Every model call is visible, priced and gated. Nothing runs without a trace row;
 - Included models are free platform models (Pollinations); premium models need the user's key. Prices are shown per model in the picker and per call in traces.
 - A public landing page is to be added (confirmed 2026-09-14) that explains and demonstrates the toolkit before sign-in.
 - One committed visual theme (confirmed 2026-09-14): the OS light/dark toggle is dropped in favour of a single fully designed look.
-- Product name: Switchboard AI. The client, Better Auth app name, MCP server (`switchboard-ai`) and system prompt use it. The GitHub repository and Postgres database are still `mini-ai-toolkit` / `mini_ai_toolkit`.
+- Product name: Switchboard AI. The client, Better Auth app name, MCP server (`switchboard-ai`) and system prompt use it. The GitHub repository is `aphelin/switchboard-ai` and the Postgres database is `switchboard_ai`.
 - No in-harness image generation. The cinematic ground image is produced by the user with Nano Banana from the prompt the design supplies; a CSS stand-in ships until then.
 
 ## Brand Commitments
