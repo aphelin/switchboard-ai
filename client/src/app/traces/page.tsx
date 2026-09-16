@@ -1,45 +1,31 @@
 import type { Metadata } from 'next';
 import { Suspense } from 'react';
 import { TracesView } from '@/components/traces/traces-view';
-import { Skeleton } from '@/components/ui/skeleton';
+import { PageHeading } from '@/components/layout/page-heading';
+import { Pane } from '@/components/tui/pane';
+import { GhostRows } from '@/components/tui/ghost';
 
 export const metadata: Metadata = {
   title: 'Traces',
-  description:
-    'Every LLM call with tokens, estimated cost, latency and outcome, grouped by conversation or generation.',
-  openGraph: {
-    title: 'Traces | Mini AI Toolkit',
-    description:
-      'Every LLM call with tokens, estimated cost, latency and outcome, grouped by conversation or generation.',
-  },
+  description: 'Every model call with tokens, estimated cost, latency and outcome, grouped by conversation or generation.',
 };
 
 function TracesLoading() {
   return (
-    <div className="space-y-4">
-      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
-        {Array.from({ length: 5 }).map((_, i) => (
-          <Skeleton key={i} className="h-16" />
-        ))}
+    <>
+      <PageHeading title="Traces" sub="Every model call the app makes, with tokens, estimated cost and latency." />
+      <div className="flex flex-col gap-6">
+        <Pane title="Totals" legend="Loading" tight><GhostRows rows={2} /></Pane>
+        <Pane title="Calls" legend="Loading"><GhostRows rows={6} /></Pane>
       </div>
-      <Skeleton className="h-64" />
-    </div>
+    </>
   );
 }
 
 export default function TracesPage() {
   return (
-    <div className="space-y-6">
-      <div>
-        <h1 className="text-2xl font-bold tracking-tight">Traces</h1>
-        <p className="text-sm text-muted-foreground">
-          Every model call the app makes, with token usage, estimated cost and
-          latency. Filter by a conversation or generation id to follow one request.
-        </p>
-      </div>
-      <Suspense fallback={<TracesLoading />}>
-        <TracesView />
-      </Suspense>
-    </div>
+    <Suspense fallback={<TracesLoading />}>
+      <TracesView />
+    </Suspense>
   );
 }

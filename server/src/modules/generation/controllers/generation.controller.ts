@@ -1,5 +1,6 @@
 import {
   Controller,
+  Delete,
   Get,
   Post,
   Body,
@@ -91,5 +92,15 @@ export class GenerationController {
     @Param('id', ParseUUIDPipe) id: string,
   ) {
     return this.generationService.cancel(user.id, id);
+  }
+
+  /** Deletes the record and its stored image; a job still in flight is cancelled first. */
+  @Delete(':id')
+  @HttpCode(HttpStatus.NO_CONTENT)
+  remove(
+    @CurrentUser() user: AuthUser,
+    @Param('id', ParseUUIDPipe) id: string,
+  ): Promise<void> {
+    return this.generationService.remove(user.id, id);
   }
 }

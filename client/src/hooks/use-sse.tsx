@@ -108,3 +108,9 @@ export function useSSE(
 
   return { connected: ctx.connected };
 }
+
+/** Connection state of the generations stream, for the status line. */
+export function useSseConnected(): boolean {
+  const ctx = useContext(SseContext);
+  return ctx?.connected ?? false;
+}

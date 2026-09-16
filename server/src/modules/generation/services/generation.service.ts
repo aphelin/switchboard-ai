@@ -5,14 +5,16 @@ import {
   Logger,
 } from '@nestjs/common';
 import { InjectQueue } from '@nestjs/bullmq';
+import { ConfigService } from '@nestjs/config';
 import { Queue } from 'bullmq';
 import { randomUUID } from 'node:crypto';
-import { defer, firstValueFrom, merge } from 'rxjs';
+import { defer, firstValueFrom, fromEvent, merge, NEVER, of } from 'rxjs';
 import { filter, map, timeout } from 'rxjs/operators';
 import { GenerationRepository } from '../repositories/generation.repository';
 import { SseService } from '../../sse/services/sse.service';
 import { BudgetService } from '../../auth/services/budget.service';
 import { ModelRouterService } from '../../providers/services/model-router.service';
+import { StorageService } from '../../../shared/storage/storage.service';
 import { CreateGenerationDto } from '../dto/create-generation.dto';
 import { QueryGenerationDto } from '../dto/query-generation.dto';
 import {
@@ -23,6 +25,8 @@ import {
   BULLMQ_PRIORITY,
 } from '../../../shared/constants/app.constants';
 import { GenerationType, JobStatus, JobPriority } from 'generated/prisma/enums';
+import type { ImageRoute } from '../../llm/types/llm.types';
+import type { AppConfiguration } from '../../../config/configuration.interface';
 import type {
   Generation,
   GenerationJobData,
@@ -40,20 +44,89 @@ const TERMINAL_STATUSES = new Set<string>([
 @Injectable()
 export class GenerationService {
   private readonly logger = new Logger(GenerationService.name);
+  private readonly publicUrl: string;
 
   constructor(
     private readonly generationRepository: GenerationRepository,
     private readonly sseService: SseService,
     private readonly budget: BudgetService,
     private readonly router: ModelRouterService,
+    private readonly storage: StorageService,
     @InjectQueue(GENERATION_QUEUE) private readonly generationQueue: Queue,
-  ) {}
+    configService: ConfigService<AppConfiguration, true>,
+  ) {
+    this.publicUrl = configService.get('app', { infer: true }).publicUrl;
+  }
+
+  /**
+   * Saves an image the user attached in chat as one of their finished images, so
+   * it can be edited through the normal pipeline (ownership, queue, traces, retry).
+   * Free: nothing is generated. Importing the same attachment again returns the
+   * existing row.
+   */
+  async importImage(
+    userId: string,
+    image: { attachmentKey: string; data: Buffer; contentType: string },
+  ): Promise<Generation> {
+    const existing = await this.generationRepository.findImportedAttachment(
+      userId,
+      image.attachmentKey,
+    );
+    if (existing) return existing;
+
+    const generation = await this.generationRepository.create({
+      userId,
+      prompt: 'Image attached in chat',
+      type: GenerationType.IMAGE,
+      priority: JobPriority.NORMAL,
+    });
+    const storageKey = `images/${generation.id}${this.storage.extensionFor(image.contentType)}`;
+    await this.storage.put(storageKey, image.data);
+    const imageUrl = `${this.publicUrl}/api/generations/${generation.id}/image?v=${Date.now()}`;
+
+    const completed = await this.generationRepository.updateStatus(
+      generation.id,
+      JobStatus.COMPLETED,
+      {
+        imageUrl,
+        parameters: { attachmentKey: image.attachmentKey, storageKey },
+      },
+    );
+    this.sseService.emitGenerationComplete({
+      generationId: generation.id,
+      userId,
+      status: JobStatus.COMPLETED,
+      imageUrl,
+    });
+    this.logger.log(`Chat attachment imported as generation ${generation.id}`);
+    return completed;
+  }
 
   async create(userId: string, dto: CreateGenerationDto): Promise<Generation> {
-    // Text generation and prompt enhancement are LLM calls; the model is only relevant for those.
+    const isImage = dto.type === GenerationType.IMAGE;
+    // Text generation and prompt enhancement are LLM calls; the LLM model is only relevant for those.
     const usesLlm = dto.type === GenerationType.TEXT || !!dto.enhance;
     const llmModel = usesLlm ? dto.llmModel : undefined;
-    if (usesLlm) await this.assertModelUsable(userId, llmModel);
+    const imageParams = isImage
+      ? (dto.parameters as ImageParameters | undefined)
+      : undefined;
+    const sourceGenerationId = imageParams?.sourceGenerationId;
+    if (sourceGenerationId)
+      await this.assertEditable(userId, sourceGenerationId);
+
+    const { imageRoute } = await this.assertModelsUsable(userId, {
+      llm: usesLlm,
+      llmModel,
+      image: isImage,
+      imageModel: imageParams?.model,
+      edit: !!sourceGenerationId,
+    });
+
+    // An edit that named no model runs on the included editing model: stored, so the worker and a retry agree.
+    const parameters = {
+      ...dto.parameters,
+      ...(sourceGenerationId && imageRoute && { model: imageRoute.model.id }),
+    } as ImageParameters | TextParameters;
 
     const priority = dto.priority ?? JobPriority.NORMAL;
 
@@ -64,7 +137,7 @@ export class GenerationService {
       priority,
       // The model choice is stored so a retry runs on the same model.
       parameters: {
-        ...dto.parameters,
+        ...parameters,
         ...(llmModel && { llmModel }),
       } as Record<string, unknown>,
     });
@@ -76,7 +149,7 @@ export class GenerationService {
       type: dto.type,
       enhance: dto.enhance ?? false,
       llmModel,
-      parameters: dto.parameters,
+      parameters,
     };
 
     const job = await this.generationQueue.add(GENERATION_JOB_NAME, jobData, {
@@ -128,7 +201,14 @@ export class GenerationService {
     userId: string,
     id: string,
     timeoutMs: number,
+    signal?: AbortSignal,
   ): Promise<Generation> {
+    // The caller went away (the chat stream was stopped): stop waiting straight away.
+    const aborted$ = signal
+      ? signal.aborted
+        ? of(undefined)
+        : fromEvent(signal, 'abort').pipe(map(() => undefined))
+      : NEVER;
     const fromEvents$ = this.sseService.events$.pipe(
       filter(
         (event) =>
@@ -146,7 +226,7 @@ export class GenerationService {
 
     try {
       await firstValueFrom(
-        merge(fromEvents$, fromDatabase$).pipe(timeout(timeoutMs)),
+        merge(fromEvents$, fromDatabase$, aborted$).pipe(timeout(timeoutMs)),
       );
     } catch {
       this.logger.warn(
@@ -169,11 +249,22 @@ export class GenerationService {
       );
     }
 
-    const llmModel = (generation.parameters as { llmModel?: string } | null)
-      ?.llmModel;
-    if (generation.type === GenerationType.TEXT) {
-      await this.assertModelUsable(userId, llmModel);
+    const stored = generation.parameters as {
+      llmModel?: string;
+      model?: string;
+      sourceGenerationId?: string;
+    } | null;
+    const llmModel = stored?.llmModel;
+    if (stored?.sourceGenerationId) {
+      await this.assertEditable(userId, stored.sourceGenerationId);
     }
+    await this.assertModelsUsable(userId, {
+      llm: generation.type === GenerationType.TEXT,
+      llmModel,
+      image: generation.type === GenerationType.IMAGE,
+      imageModel: stored?.model,
+      edit: !!stored?.sourceGenerationId,
+    });
 
     const updated = await this.generationRepository.updateStatus(
       id,
@@ -242,19 +333,71 @@ export class GenerationService {
     return updated;
   }
 
+  /** Deletes a generation and its stored image. A job still in flight is cancelled first so the worker skips it. */
+  async remove(userId: string, id: string): Promise<void> {
+    const generation = await this.findOne(userId, id);
+    if (
+      generation.status === JobStatus.PENDING ||
+      generation.status === JobStatus.GENERATING
+    ) {
+      await this.cancel(userId, id);
+    }
+
+    const storageKey = (generation.parameters as { storageKey?: string } | null)
+      ?.storageKey;
+    if (storageKey) await this.storage.delete(storageKey);
+
+    await this.generationRepository.delete(id);
+    this.logger.log(`Generation ${id} deleted`);
+  }
+
   /**
-   * Fails the request before anything is queued when the model is unknown or
-   * needs a key the user hasn't added. The worker resolves the model again, so
-   * a key removed while the job waits is not used. Only calls on the app's key
-   * count toward the daily budget.
+   * Fails the request before anything is queued when a model is unknown or needs
+   * a key the user hasn't added. The worker resolves the models again, so a key
+   * removed while the job waits is not used. Only calls on the app's keys (LLM
+   * or Pollinations images) count toward the daily budget.
    */
-  private async assertModelUsable(
+  private async assertModelsUsable(
     userId: string,
-    llmModel: string | undefined,
-  ): Promise<void> {
-    const route = await this.router.resolve(userId, llmModel);
-    if (route.source === 'platform') {
+    models: {
+      llm: boolean;
+      llmModel?: string;
+      image: boolean;
+      imageModel?: string;
+      /** The image request edits an existing image, so the model must take one in. */
+      edit?: boolean;
+    },
+  ): Promise<{ imageRoute?: ImageRoute }> {
+    const sources: string[] = [];
+    let imageRoute: ImageRoute | undefined;
+    if (models.llm) {
+      sources.push((await this.router.resolve(userId, models.llmModel)).source);
+    }
+    if (models.image) {
+      imageRoute = await this.router.resolveImage(userId, models.imageModel, {
+        edit: models.edit,
+      });
+      sources.push(imageRoute.source);
+    }
+    if (sources.includes('platform')) {
       await this.budget.assertWithinBudget(userId);
+    }
+    return { imageRoute };
+  }
+
+  /** An edit starts from one of the user's own finished images; anything else is refused before queueing. */
+  private async assertEditable(userId: string, id: string): Promise<void> {
+    const source = await this.findOne(userId, id);
+    const storageKey = (source.parameters as { storageKey?: string } | null)
+      ?.storageKey;
+    if (
+      source.type !== GenerationType.IMAGE ||
+      source.status !== JobStatus.COMPLETED ||
+      !storageKey
+    ) {
+      throw new BadRequestException(
+        'Only a finished image can be edited. Pick a completed image generation.',
+      );
     }
   }
 }

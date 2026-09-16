@@ -1,7 +1,7 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { createReadStream, type ReadStream } from 'node:fs';
-import { mkdir, stat, unlink, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, stat, unlink, writeFile } from 'node:fs/promises';
 import { dirname, extname, resolve, sep } from 'node:path';
 import type { AppConfiguration } from '../../config/configuration.interface';
 
@@ -73,6 +73,11 @@ export class StorageService {
 
   createReadStream(key: string): ReadStream {
     return createReadStream(this.resolvePath(key));
+  }
+
+  /** The whole object in memory (images are a few MB at most). */
+  get(key: string): Promise<Buffer> {
+    return readFile(this.resolvePath(key));
   }
 
   async delete(key: string): Promise<void> {

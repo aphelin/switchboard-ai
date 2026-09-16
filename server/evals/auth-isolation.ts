@@ -215,6 +215,14 @@ async function main(): Promise<void> {
       chatBody(conversationId, `alice-${stamp}`),
     );
     check(aliceChat.status === 200, `Alice chats (${aliceChat.status})`);
+    const aliceRead = await alice.request<{
+      messages: Array<{ role: string }>;
+    }>('GET', `/api/chat/conversations/${conversationId}`);
+    check(
+      aliceRead.status === 200 &&
+        aliceRead.body.messages.some((message) => message.role === 'assistant'),
+      `Alice's reply is saved (${aliceRead.body?.messages?.map((message) => message.role).join(', ')})`,
+    );
     const bobChat = await bob.request(
       'POST',
       '/api/chat',

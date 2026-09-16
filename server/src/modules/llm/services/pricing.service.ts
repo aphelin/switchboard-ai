@@ -4,6 +4,10 @@ import {
   BYOK_MODELS,
   type ModelPricingPerMillion,
 } from '../catalog/model-catalog';
+import {
+  TRANSCRIPTION_FALLBACK_USD_PER_SECOND,
+  TRANSCRIPTION_MODEL,
+} from '../../../shared/constants/app.constants';
 import type { UsageSummary } from '../types/llm.types';
 
 /** USD per single token. */
@@ -45,6 +49,12 @@ const DEFAULT_PRICING_PER_MILLION: Record<
 export class PricingService implements OnModuleInit {
   private readonly logger = new Logger(PricingService.name);
   private readonly pricing = new Map<string, ModelPricing>();
+  /** Whether a Pollinations text model takes images in, from the same live list. */
+  private readonly imageInput = new Map<string, boolean>();
+  /** USD per second of audio for Pollinations speech-to-text models. */
+  private readonly audioPerSecond = new Map<string, number>([
+    [TRANSCRIPTION_MODEL, TRANSCRIPTION_FALLBACK_USD_PER_SECOND],
+  ]);
 
   constructor(private readonly registry: ModelRegistryService) {
     for (const [model, price] of Object.entries(DEFAULT_PRICING_PER_MILLION)) {
@@ -62,7 +72,20 @@ export class PricingService implements OnModuleInit {
     const { primary } = this.registry.config;
     if (primary.name === 'pollinations') {
       await this.loadPollinationsPricing(primary.baseUrl, primary.apiKey);
+      void this.loadPollinationsAudioPricing(primary.baseUrl, primary.apiKey);
     }
+  }
+
+  /** Vision support of a platform text model; models the live list did not name are assumed to see. */
+  supportsImageInput(modelId: string): boolean {
+    return this.lookupIn(this.imageInput, modelId) ?? true;
+  }
+
+  /** Cost of a speech-to-text call from the seconds the provider billed. */
+  estimateAudioCost(model: string, seconds: number): number | null {
+    const perSecond = this.lookupIn(this.audioPerSecond, model);
+    if (perSecond === undefined) return null;
+    return Number((seconds * perSecond).toFixed(8));
   }
 
   estimateCost(
@@ -84,20 +107,57 @@ export class PricingService implements OnModuleInit {
   }
 
   private lookup(model: string | undefined): ModelPricing | undefined {
-    if (!model) return undefined;
-    const exact = this.pricing.get(model);
-    if (exact) return exact;
+    return this.lookupIn(this.pricing, model);
+  }
 
-    // Try without the provider prefix ("openai/gpt-5.4-mini" -> "gpt-5.4-mini") and
-    // dated response ids ("gpt-5.4-nano-2026-03-17" -> "gpt-5.4-nano").
+  /** Exact id first, then without the provider prefix ("openai/gpt-5.4-mini" -> "gpt-5.4-mini") and dated response ids ("gpt-5.4-nano-2026-03-17"). */
+  private lookupIn<T>(
+    table: Map<string, T>,
+    model: string | undefined,
+  ): T | undefined {
+    if (!model) return undefined;
+    const exact = table.get(model);
+    if (exact !== undefined) return exact;
+
     const bare = model.includes('/')
       ? model.slice(model.indexOf('/') + 1)
       : model;
-    for (const [key, value] of this.pricing) {
+    for (const [key, value] of table) {
       const bareKey = key.includes('/') ? key.slice(key.indexOf('/') + 1) : key;
       if (bareKey === bare || bare.startsWith(`${bareKey}-`)) return value;
     }
     return undefined;
+  }
+
+  /** Pollinations serves the audio list next to the text one: ".../v1" -> ".../audio/models". */
+  private async loadPollinationsAudioPricing(
+    baseUrl: string,
+    apiKey: string,
+  ): Promise<void> {
+    try {
+      const root = baseUrl.replace(/\/v1\/?$/, '');
+      const response = await fetch(`${root}/audio/models`, {
+        headers: apiKey ? { Authorization: `Bearer ${apiKey}` } : undefined,
+        signal: AbortSignal.timeout(PRICING_FETCH_TIMEOUT_MS),
+      });
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      const models = (await response.json()) as Array<{
+        name: string;
+        pricing?: { promptAudioSeconds?: string | number };
+      }>;
+      let loaded = 0;
+      for (const model of models) {
+        const perSecond = Number(model.pricing?.promptAudioSeconds);
+        if (!Number.isFinite(perSecond)) continue;
+        this.audioPerSecond.set(model.name, perSecond);
+        loaded++;
+      }
+      this.logger.log(`Loaded pricing for ${loaded} Pollinations audio models`);
+    } catch (error) {
+      this.logger.warn(
+        `Could not load Pollinations audio pricing (speech to text uses the list price): ${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
   }
 
   private setPerMillion(model: string, price: ModelPricingPerMillion): void {
@@ -138,6 +198,7 @@ export class PricingService implements OnModuleInit {
       const body = (await response.json()) as {
         data?: Array<{
           id: string;
+          input_modalities?: string[];
           pricing?: {
             promptTextTokens?: string | number;
             completionTextTokens?: string | number;
@@ -148,6 +209,12 @@ export class PricingService implements OnModuleInit {
 
       let loaded = 0;
       for (const model of body.data ?? []) {
+        if (Array.isArray(model.input_modalities)) {
+          this.imageInput.set(
+            model.id,
+            model.input_modalities.includes('image'),
+          );
+        }
         const input = Number(model.pricing?.promptTextTokens);
         if (!Number.isFinite(input)) continue;
         const output = Number(model.pricing?.completionTextTokens);

@@ -13,6 +13,8 @@ export const ChatRequestSchema = z.object({
   messageId: z.string().optional(),
   requestMetadata: z.unknown().optional(),
   documentIds: z.array(z.uuid()).max(50).optional(),
+  /** "none" takes the document tools away for this turn; otherwise `documentIds` narrows the search (empty = all). */
+  documentScope: z.enum(['all', 'selected', 'none']).optional(),
   model: z.string().min(1).max(120).optional(),
 });
 

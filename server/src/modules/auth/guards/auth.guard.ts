@@ -60,6 +60,7 @@ export class AuthGuard implements CanActivate {
       id: session.user.id,
       name: session.user.name,
       email: session.user.email,
+      isGuest: session.user.isAnonymous === true,
     };
     request.authMethod = apiKey ? 'api-key' : 'session';
     return true;

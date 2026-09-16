@@ -20,11 +20,11 @@ import { TraceService } from '../../observability/services/trace.service';
 import { CircuitBreakerService } from '../../../shared/circuit-breaker/circuit-breaker.service';
 import {
   isCircuitOpenError,
+  isNotProviderOutage,
   isUpstreamClientError,
   ServiceUnavailableError,
   toUpstreamError,
-  upstreamStatusOf,
-  UpstreamError,
+  toUserKeyError,
 } from '../../../shared/errors/upstream.error';
 import { redactSecrets } from '../../../shared/ai/redact-secrets';
 import { LLM_CALL_TIMEOUT_MS } from '../../../shared/constants/app.constants';
@@ -355,8 +355,7 @@ export class LlmService {
         {
           name: `llm:user-key:${provider}`,
           timeout: LLM_CALL_TIMEOUT_MS,
-          errorFilter: (error: unknown) =>
-            isUpstreamClientError(error) || upstreamStatusOf(error) === 429,
+          errorFilter: isNotProviderOutage,
         },
       );
       this.userKeyBreakers.set(provider, breaker);
@@ -421,18 +420,9 @@ export class LlmService {
     }
     if (NoObjectGeneratedError.isInstance(error)) return error;
 
-    const upstream = toUpstreamError(target.service, error);
-    if (
-      target.keySource === 'user' &&
-      (upstream.status === 401 || upstream.status === 403)
-    ) {
-      return new UpstreamError(
-        target.service,
-        upstream.status,
-        `rejected your API key (HTTP ${upstream.status}). Update or remove it under AI providers.`,
-      );
-    }
-    return upstream;
+    return target.keySource === 'user'
+      ? toUserKeyError(target.service, error)
+      : toUpstreamError(target.service, error);
   }
 
   private async recordSuccess(

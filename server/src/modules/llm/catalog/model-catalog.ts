@@ -49,6 +49,8 @@ export interface CatalogModel {
   capabilities: {
     tools: boolean;
     structuredOutput: boolean;
+    /** Takes images in a message (chat attachments). */
+    vision: boolean;
   };
   /** List price; platform models are priced by PricingService instead. */
   pricing?: ModelPricingPerMillion;
@@ -93,7 +95,7 @@ export const BYOK_PROVIDER_INFO: Record<ByokProvider, ByokProviderInfo> = {
 export const catalogModelId = (provider: ModelProvider, modelId: string) =>
   `${provider}:${modelId}`;
 
-const ALL_CAPABILITIES = { tools: true, structuredOutput: true };
+const ALL_CAPABILITIES = { tools: true, structuredOutput: true, vision: true };
 
 const byok = (
   provider: ByokProvider,
@@ -187,9 +189,13 @@ export const fastModelFor = (provider: ByokProvider): CatalogModel => {
   return model;
 };
 
-/** The models served on the app's own provider key: the configured main and fast models. */
+/**
+ * The models served on the app's own provider key: the configured main and fast
+ * models. `visionOf` says whether each takes images (from the provider's live list).
+ */
 export function platformModels(
   config: Pick<LlmConfig, 'primary' | 'fastModel'>,
+  visionOf: (modelId: string) => boolean = () => true,
 ): CatalogModel[] {
   const main: CatalogModel = {
     id: catalogModelId('platform', config.primary.model),
@@ -198,7 +204,10 @@ export function platformModels(
     label: config.primary.model,
     description: `Included: runs on the app's ${config.primary.name} key and counts toward your daily budget`,
     tier: 'balanced',
-    capabilities: ALL_CAPABILITIES,
+    capabilities: {
+      ...ALL_CAPABILITIES,
+      vision: visionOf(config.primary.model),
+    },
   };
   if (config.fastModel === config.primary.model) return [main];
   return [
@@ -209,6 +218,7 @@ export function platformModels(
       modelId: config.fastModel,
       label: config.fastModel,
       tier: 'fast',
+      capabilities: { ...ALL_CAPABILITIES, vision: visionOf(config.fastModel) },
     },
   ];
 }

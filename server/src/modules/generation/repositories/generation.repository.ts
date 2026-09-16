@@ -28,6 +28,20 @@ export class GenerationRepository {
     });
   }
 
+  /** A chat attachment the user already imported as an image, so editing it again reuses the same row. */
+  async findImportedAttachment(
+    userId: string,
+    attachmentKey: string,
+  ): Promise<Generation | null> {
+    return this.prisma.generation.findFirst({
+      where: {
+        userId,
+        status: JobStatus.COMPLETED,
+        parameters: { path: ['attachmentKey'], equals: attachmentKey },
+      },
+    });
+  }
+
   /** Unscoped lookup for internal use (queue workers). Request handlers use findByIdForUser. */
   async findById(id: string): Promise<Generation | null> {
     return this.prisma.generation.findUnique({ where: { id } });
@@ -117,6 +131,10 @@ export class GenerationRepository {
       default:
         return {};
     }
+  }
+
+  async delete(id: string): Promise<void> {
+    await this.prisma.generation.delete({ where: { id } });
   }
 
   async updateJobId(id: string, jobId: string): Promise<Generation> {

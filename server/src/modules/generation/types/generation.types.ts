@@ -40,6 +40,8 @@ export interface ImageParameters {
   seed?: number;
   enhance?: boolean;
   negativePrompt?: string;
+  /** Set on an edit: the finished image (same owner) the prompt is applied to. */
+  sourceGenerationId?: string;
 }
 
 export interface TextParameters {

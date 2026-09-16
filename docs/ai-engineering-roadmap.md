@@ -1,6 +1,6 @@
 # AI Engineering Roadmap & Notes
 
-Notes for extending Mini AI Toolkit into a portfolio project that covers a typical "Senior AI Node.js Engineer" job description (RAG, agents, MCP, evals, cloud, CI/CD).
+Notes for extending Switchboard AI into a portfolio project that covers a typical "Senior AI Node.js Engineer" job description (RAG, agents, MCP, evals, cloud, CI/CD).
 
 > Written 2026-09-13. Free tiers, pricing and framework landscape change often. Re-check before relying on numbers.
 

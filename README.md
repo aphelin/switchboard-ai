@@ -1,4 +1,4 @@
-# Mini AI Toolkit
+# Switchboard AI
 
 A fullstack AI application: image and text generation with async job processing, a **RAG knowledge base** over your own documents (pgvector, hybrid search), a **streaming tool-using chat agent** with human approval for side effects, an **MCP server** that exposes the same capabilities to external agents, **LLM observability** (tokens, cost, latency per call) and an **evaluation harness** that runs in CI. Everything is **per user**: email + password accounts, API keys for MCP clients, and a daily AI spending limit.
 
@@ -49,7 +49,9 @@ Design notes and interview-oriented explanations live in [`docs/architecture.md`
 
 **RAG flow:** upload document → `Document` row → ingestion job: chunk (LangChain splitter) → embed (local model) → pgvector → READY. Search = vector similarity + Postgres full-text, fused with Reciprocal Rank Fusion; every passage is scanned for prompt-injection patterns.
 
-**Agent flow:** `POST /api/chat` → AI SDK `streamText` loop (max 6 steps) with tools `search_documents`, `list_documents`, `list_generations`, `get_generation`, `generate_image` (requires user approval) → UI message stream to the browser → messages persisted, conversation titled by the fast model.
+**Agent flow:** `POST /api/chat` → AI SDK `streamText` loop (max 6 steps) with tools `search_documents`, `list_documents`, `list_generations`, `get_generation`, `generate_image` and `edit_image` (both require user approval) → UI message stream to the browser → messages persisted, conversation titled by the fast model. Messages can carry up to three images (shrunk in the browser, stored by the API and inlined for the model; vision-capable models only), and `POST /api/chat/transcribe` turns a microphone recording into text through Pollinations speech-to-text, priced per second in the ledger.
+
+**Image editing:** a finished image can be edited with a prompt (`parameters.sourceGenerationId` on `POST /api/generations`, from the gallery viewer, the agent tool or MCP). The worker reads the source bytes from storage. Included models go to Pollinations `/v1/images/edits` (FLUX.2 Klein, $0.005 flat). A Google key uses Gemini Nano Banana through `generateImage` with the source attached. The result is a new generation that links back to its source.
 
 Every model call goes through `LlmService` (provider registry, breaker, optional fallback provider, Zod-validated structured output with one repair attempt) and is recorded as an `LlmCall` (tokens, estimated cost, latency, and whether it ran on the app's key or the user's own).
 
@@ -104,16 +106,17 @@ The original project deliberately avoided provider abstractions (KISS/YAGNI). Mu
 - The server validates every model choice: unknown ids, unlisted platform models and providers without a key are rejected before anything is queued
 - Claude chats use Anthropic prompt caching on the system prompt and tools; Claude Opus 5 has server-side refusal fallback enabled
 - MCP `ask_documents` and `generate_text` accept the same `model` ids
+- **Image models:** an "Image model" picker next to Priority lists Pollinations' cheap image models (loaded live, $0.01 per image or less) and **Nano Banana Pro / 2 / 2 Lite** on your Google key. Gemini gets the closest aspect ratio to the requested size. Edits use models that advertise `capabilities.edit`: included FLUX.2 Klein, or Nano Banana on your Google key. Included images count toward the daily budget, images on your key don't
 
 ### MCP server
 
-- `POST /api/mcp` (Streamable HTTP, stateless): tools `generate_image`, `generate_text`, `list_generations`, `get_generation`, `search_documents`, `ask_documents`, `list_documents`, `add_document`, `delete_document`; resource `document://{id}`
-- Works with Claude Code, Claude Desktop and the MCP Inspector
+- `POST /api/mcp` (Streamable HTTP, stateless): tools `generate_image`, `edit_image`, `generate_text`, `list_generations`, `get_generation`, `search_documents`, `ask_documents`, `list_documents`, `add_document`, `delete_document`; resource `document://{id}`
+- Streamable HTTP at `POST /api/mcp`. Connect Claude Code with the `claude mcp add` command from the API keys dialog, or list tools with the MCP Inspector
 
 ### Observability and evaluation
 
 - `LlmCall` trace per model call: name, trace id, provider, model, tokens, cached tokens, estimated cost (Pollinations prices loaded at startup), latency, status; `/traces` page with summaries by model and by feature
-- Eval harness (`server/evals`): retrieval hit@k and MRR (free, deterministic) plus LLM-as-judge correctness/faithfulness, abstention on unanswerable questions and a prompt-injection test; thresholds fail CI
+- Eval harness (`server/evals`): every CI push runs retrieval hit@k and MRR (free, deterministic). LLM-as-judge correctness/faithfulness, abstention and a prompt-injection test run when `POLLINATIONS_API_KEY` is set. Thresholds fail the job
 - Vitest unit tests for the pure logic (RRF, chunking, injection scanner, pricing, history trimming, key encryption and redaction, model routing) and for `LlmService` with mock models
 
 ### Accounts and access
@@ -123,6 +126,14 @@ The original project deliberately avoided provider abstractions (KISS/YAGNI). Mu
 - Retrieval filters by owner inside the SQL; agent tools get the user id from the session, never from the model
 - API keys (`mat_…`, stored hashed, revocable) authenticate MCP clients and scripts
 - Per-user daily AI budget (`USER_DAILY_BUDGET_USD`) and per-user rate limits
+
+### Demo sessions
+
+- **"Try the live demo"** on the landing page opens a guest session in one click, no sign-up (Better Auth anonymous user)
+- The guest starts with a private copy of a real session: completed generations, indexed documents (chunks and embeddings copied inside Postgres), conversations and the traces behind them. Copies get new ids, so guests are isolated by the same `userId` filters as accounts
+- Included (free) models only: guests can't store provider keys or create MCP API keys, so nobody's paid key is ever used for a visitor
+- Cost and abuse limits: a per-guest daily budget, a shared daily budget for all guests, a daily cap on new guests and a per-IP limit on guest sign-ins. Copied traces are history and never count toward a budget
+- A BullMQ job scheduler deletes guests after `DEMO_GUEST_TTL_HOURS` with everything they own, and their image files unless the template still uses them
 
 ### Platform
 
@@ -217,14 +228,30 @@ MCP_API_KEY=mat_... npm run mcp:smoke   # exercises the MCP server against a run
 npm run test:auth          # two-user isolation test against a running API (dev/test DB only)
 npm run test:providers     # bring-your-own-key isolation test (no provider account needed;
                            # E2E_ANTHROPIC_API_KEY=sk-ant-... adds one real chat turn)
+npm run test:demo          # guest session limits and isolation against a running API (no LLM calls)
 ```
+
+### Filling the demo
+
+Guests start with a copy of one account, the demo template. Fill it through the real pipeline so every trace a visitor sees really happened:
+
+```bash
+# server/.env.development: DEMO_TEMPLATE_EMAIL=demo-template@example.com (restart the API)
+cd server
+DEMO_TEMPLATE_EMAIL=demo-template@example.com npm run demo:seed
+# indexes the eval fixture documents, queues 4 images and a text generation on the
+# included models, and asks the agent 3 questions (a few cents); prints the password it created.
+# --skip-llm indexes the documents only (free). Safe to re-run: finished steps are skipped.
+```
+
+Sign in as the template to curate it: whatever it holds is what the next guest gets. Choose an address nobody else can register first, since sign-up is open.
 
 ### Connecting an MCP client
 
 ```bash
 # Claude Code
 # Create a key first: user menu -> API keys
-claude mcp add --transport http mini-ai-toolkit http://localhost:4000/api/mcp --header "x-api-key: mat_..."
+claude mcp add --transport http switchboard-ai http://localhost:4000/api/mcp --header "x-api-key: mat_..."
 
 # MCP Inspector
 npx @modelcontextprotocol/inspector --cli http://localhost:4000/api/mcp --method tools/list
@@ -240,13 +267,18 @@ npx @modelcontextprotocol/inspector --cli http://localhost:4000/api/mcp --method
 | `POLLINATIONS_API_KEY` | Pollinations.ai API key (images; default LLM provider) | required |
 | `SERVER_PORT` | Backend port | `4000` |
 | `SERVER_PUBLIC_URL` | Public origin of the API, used in image URLs | `http://localhost:<SERVER_PORT>` |
-| `CLIENT_URL` | Allowed CORS origin | `http://localhost:3000` |
+| `CLIENT_URL` | Allowed browser origin(s), comma-separated for more than one (e.g. a second dev port) | `http://localhost:3000` |
 | `STORAGE_DIR` | Directory for generated images | `./storage` |
 | `BETTER_AUTH_SECRET` | Secret for session cookies (`openssl rand -base64 32`) | required |
 | `BETTER_AUTH_URL` | Origin the auth endpoints run on | `SERVER_PUBLIC_URL` |
 | `USER_DAILY_BUDGET_USD` | Per-user daily AI spend limit in USD (0 = unlimited) | `0.5` |
 | `AUTH_CLAIM_LEGACY_DATA` | First account created takes ownership of rows from before auth | `false` |
 | `CREDENTIALS_ENCRYPTION_KEY` | AES-256 key (32 bytes, base64) for users' own provider keys; unset = included models only. Changing it makes stored keys unreadable | none |
+| `DEMO_ENABLED` | One-click guest sessions on the landing page | `true` |
+| `DEMO_TEMPLATE_EMAIL` | Account every new guest gets a copy of (fill it with `npm run demo:seed`); unset = guests start empty | none |
+| `DEMO_GUEST_TTL_HOURS` | Guests and their data are deleted this long after sign-in | `24` |
+| `DEMO_GUEST_DAILY_BUDGET_USD` / `DEMO_TOTAL_DAILY_BUDGET_USD` | Daily AI spend limit per guest / for all guests together (0 = unlimited) | `0.1` / `2` |
+| `DEMO_MAX_GUESTS_PER_DAY` | New guest sessions per UTC day, across all visitors (plus 5 per IP per hour in production) | `200` |
 | `LLM_PROVIDER` | `pollinations` \| `openai` \| `groq` \| `gemini` \| `ollama` \| `custom` | `pollinations` |
 | `LLM_BASE_URL` / `LLM_API_KEY` | Override the preset endpoint / key (Pollinations reuses `POLLINATIONS_API_KEY`) | preset |
 | `LLM_MODEL` | Main model (chat agent, text generation) | `openai/gpt-5.4-mini` |
@@ -265,12 +297,14 @@ npx @modelcontextprotocol/inspector --cli http://localhost:4000/api/mcp --method
 
 | Method | Path | Description |
 | --- | --- | --- |
-| `GET` | `/api/health` | Health check (the only public route besides `/api/auth/*`) |
+| `GET` | `/api/health` | Health check (public, like `/api/demo` and `/api/auth/*`) |
+| `GET` | `/api/demo` | Whether one-click guest sessions are open, their lifetime and budget (public) |
 | `POST` | `/api/auth/sign-up/email` · `/sign-in/email` · `/sign-out` | Better Auth (sets / clears the session cookie) |
+| `POST` | `/api/auth/sign-in/anonymous` | Opens a demo guest session, filled with a copy of the demo template |
 | `GET` | `/api/auth/get-session` | Current session |
 | `POST` | `/api/auth/api-key/create` · `GET /api/auth/api-key/list` · `POST /api/auth/api-key/delete` | API keys for MCP clients |
-| `GET` | `/api/me` | Signed-in user, today's AI spend vs budget, and estimated spend on own keys |
-| `GET` | `/api/providers` | Model catalog grouped by provider, with which providers the user has a key for |
+| `GET` | `/api/me` | Signed-in user (`isGuest`), today's AI spend vs budget, estimated spend on own keys, and a guest's expiry |
+| `GET` | `/api/providers` | Text and image model catalog grouped by provider, with which providers the user has a key for |
 | `PUT` · `DELETE` | `/api/providers/:provider/key` | Verify and store (`{ apiKey }`) / remove your OpenAI, Anthropic or Google key |
 | `POST` | `/api/generations` | Submit a generation (`type`, `prompt`, `enhance`, `priority`, `parameters`, `llmModel`) |
 | `GET` | `/api/generations` | List generations (paginated, filter by type/status) |
@@ -295,7 +329,7 @@ npx @modelcontextprotocol/inspector --cli http://localhost:4000/api/mcp --method
 
 **Providers.** Image generation uses the Pollinations image API. Text, chat, structured outputs and the eval judge go through the AI SDK. The included models run on an OpenAI-compatible endpoint: Pollinations by default (`openai/gpt-5.4-mini` and `openai/gpt-5.4-nano`, priced per token in Pollen ≈ USD), or OpenAI / Groq / Gemini / Ollama via `LLM_PROVIDER`. Users who add their own key can also pick OpenAI (`@ai-sdk/openai`, Responses API), Anthropic (`@ai-sdk/anthropic`) and Google (`@ai-sdk/google`) models.
 
-**Supported image models:** `flux` (default), `flux-2-dev`, `gptimage`, `seedream`, `imagen-4`, `grok-imagine`, `zimage`, `dirtberry`.
+**Image models:** loaded at startup from Pollinations' `GET /image/models` (a built-in list is used if it can't be reached). Only official models priced per image at $0.01 or less are included, because the app pays for them: token-priced and pricier models, community proxies and video models are left out, and requests naming them are rejected. Premium image models are available on the user's own key:, plus Gemini Nano Banana Pro / 2 / 2 Lite (`gemini-3-pro-image`, `gemini-3.1-flash-image`, `gemini-3.1-flash-lite-image`) on the user's Google key. Default: `platform:flux`. Ids stored on older generations (`flux`, `zimage`) still resolve.
 
 **Costs.** Every call is priced from the provider's published rates and visible on the Traces page. A typical RAG chat turn with `gpt-5.4-mini` costs about $0.002; local embeddings cost nothing.
 

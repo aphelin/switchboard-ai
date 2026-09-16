@@ -1,12 +1,13 @@
 "use client";
 
 import { useState } from "react";
-import { Bot, KeyRound, LogOut, Loader2 } from "lucide-react";
-import { authClient } from "@/lib/auth-client";
+import { Bot, KeyRound, LogOut } from "lucide-react";
+import { authClient, isGuestUser } from "@/lib/auth-client";
 import { getMe } from "@/lib/api";
+import { formatUsd, timeUntil } from "@/lib/format";
 import { useModels } from "@/hooks/use-models";
 import type { MeResponse } from "@/lib/types";
-import { Button } from "@/components/ui/button";
+import { Spin } from "@/components/tui/spin";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -25,10 +26,7 @@ function initialsOf(name: string | undefined, email: string | undefined): string
   return letters.toUpperCase();
 }
 
-function formatUsd(value: number): string {
-  return `$${value < 0.01 && value > 0 ? value.toFixed(4) : value.toFixed(2)}`;
-}
-
+/** The account avatar: an earth-toned circle with initials that opens usage, keys and sign out. */
 export function UserMenu() {
   const { data: session } = authClient.useSession();
   const [me, setMe] = useState<MeResponse | null>(null);
@@ -38,104 +36,74 @@ export function UserMenu() {
 
   if (!session) return null;
   const { user } = session;
+  const guest = isGuestUser(user);
 
   const refreshUsage = async () => {
-    try {
-      setMe(await getMe());
-    } catch {
-      // usage is informational; the menu still works without it
-    }
+    try { setMe(await getMe()); } catch { /* usage is informational */ }
   };
 
   const handleSignOut = async () => {
     setSigningOut(true);
-    try {
-      await authClient.signOut();
-    } finally {
-      // Full reload so no state from this user survives in memory.
-      window.location.reload();
-    }
+    try { await authClient.signOut(); } finally { window.location.reload(); }
   };
 
   const usage = me?.usage;
 
   return (
     <>
-      <DropdownMenu
-        onOpenChange={(open) => {
-          if (open) void refreshUsage();
-        }}
-      >
+      <DropdownMenu onOpenChange={(open) => { if (open) void refreshUsage(); }}>
         <DropdownMenuTrigger
           render={
-            <Button
-              variant="ghost"
-              size="icon"
-              className="h-9 w-9 rounded-full"
+            <button
+              type="button"
+              className="flex size-11 shrink-0 items-center justify-center rounded-full bg-[radial-gradient(circle_at_35%_30%,#e9cfae,#b5885f_55%,#5e4128)] text-sm font-bold text-white shadow-[0_8px_20px_-10px_rgba(181,136,95,0.7)] transition-transform hover:scale-105 focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2"
               aria-label="Account menu"
               data-testid="user-menu-trigger"
             />
           }
         >
-          <span className="flex h-8 w-8 items-center justify-center rounded-full bg-primary text-xs font-semibold text-primary-foreground">
-            {initialsOf(user.name, user.email)}
-          </span>
+          {initialsOf(user.name, user.email)}
         </DropdownMenuTrigger>
-        <DropdownMenuContent align="end" className="w-64" data-testid="user-menu">
+        <DropdownMenuContent align="end" className="w-72" data-testid="user-menu">
           <DropdownMenuGroup>
-            <DropdownMenuLabel className="space-y-0.5 px-2 py-1.5">
-              <span className="block truncate text-sm font-medium text-foreground">
-                {user.name}
+            <DropdownMenuLabel className="px-3 py-2">
+              <span className="block truncate text-[15px] font-bold text-ink">{guest ? "Guest" : user.name}</span>
+              <span className="block truncate text-sm" data-testid={guest ? "user-menu-guest" : undefined}>
+                {guest ? (me?.guest ? `Demo session · deleted ${timeUntil(me.guest.expiresAt)}` : "Demo session") : user.email}
               </span>
-              <span className="block truncate text-xs font-normal">{user.email}</span>
             </DropdownMenuLabel>
           </DropdownMenuGroup>
-          <div className="px-2 pb-1.5 text-xs text-muted-foreground" data-testid="user-usage">
+          <div className="px-3 pb-2 text-sm text-dim" data-testid="user-usage">
             {usage ? (
               <>
-                Today: <span className="font-mono text-foreground">{formatUsd(usage.spentTodayUsd)}</span>
-                {usage.dailyBudgetUsd !== null ? (
-                  <>
-                    {" "}of <span className="font-mono">{formatUsd(usage.dailyBudgetUsd)}</span>
-                  </>
-                ) : (
-                  " (no limit)"
-                )}
+                <span className="block">
+                  Today <span className="font-bold text-ink">{formatUsd(usage.spentTodayUsd)}</span>
+                  {usage.dailyBudgetUsd !== null ? <> of <span className="font-semibold">{formatUsd(usage.dailyBudgetUsd)}</span> {guest ? "demo budget" : "budget"}</> : " (no limit)"}
+                </span>
                 {usage.ownKeysSpentTodayUsd > 0 && (
-                  <span className="mt-0.5 block" data-testid="user-usage-own-keys">
-                    Own keys today:{" "}
-                    <span className="font-mono text-foreground">
-                      {formatUsd(usage.ownKeysSpentTodayUsd)}
-                    </span>
+                  <span className="block" data-testid="user-usage-own-keys">
+                    Own keys today <span className="font-bold text-ink">{formatUsd(usage.ownKeysSpentTodayUsd)}</span>
                   </span>
                 )}
               </>
             ) : (
-              <span className="inline-flex items-center gap-1">
-                <Loader2 className="h-3 w-3 animate-spin" /> Loading usage…
-              </span>
+              <span className="inline-flex items-center gap-2"><Spin className="size-3.5" /> Loading usage</span>
             )}
           </div>
           <DropdownMenuSeparator />
-          <DropdownMenuItem
-            onClick={() => openProviderDialog()}
-            data-testid="user-menu-ai-providers"
-          >
+          <DropdownMenuItem onClick={() => openProviderDialog()} data-testid="user-menu-ai-providers">
             <Bot />
             AI providers
           </DropdownMenuItem>
-          <DropdownMenuItem onClick={() => setApiKeysOpen(true)} data-testid="user-menu-api-keys">
-            <KeyRound />
-            API keys
-          </DropdownMenuItem>
-          <DropdownMenuItem
-            variant="destructive"
-            disabled={signingOut}
-            onClick={() => void handleSignOut()}
-            data-testid="user-menu-sign-out"
-          >
+          {!guest && (
+            <DropdownMenuItem onClick={() => setApiKeysOpen(true)} data-testid="user-menu-api-keys">
+              <KeyRound />
+              API keys
+            </DropdownMenuItem>
+          )}
+          <DropdownMenuItem variant="destructive" disabled={signingOut} onClick={() => void handleSignOut()} data-testid="user-menu-sign-out">
             <LogOut />
-            Sign out
+            {guest ? "End demo" : "Sign out"}
           </DropdownMenuItem>
         </DropdownMenuContent>
       </DropdownMenu>

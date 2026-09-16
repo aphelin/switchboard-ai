@@ -1,7 +1,8 @@
 import type { EmbeddingProviderName, LlmProviderName } from './llm-presets';
 
 export interface AppCorsConfiguration {
-  origin: string;
+  /** Browser origins allowed to call the API with credentials. */
+  origin: string[];
   credentials: boolean;
 }
 
@@ -68,6 +69,21 @@ export interface AuthConfig {
   claimLegacyData: boolean;
 }
 
+export interface DemoConfig {
+  /** Visitors can open a guest session in one click, without an account. */
+  enabled: boolean;
+  /** Account whose documents, generations, chats and traces every new guest starts with; null = guests start empty. */
+  templateEmail: string | null;
+  /** Guests and everything they created are deleted this many hours after sign-in. */
+  guestTtlHours: number;
+  /** Daily AI spend limit per guest in USD; null = unlimited. */
+  guestDailyBudgetUsd: number | null;
+  /** Daily AI spend limit for all guests together in USD, protecting the shared platform key; null = unlimited. */
+  totalDailyBudgetUsd: number | null;
+  /** New guest sessions allowed per day (UTC), across all visitors. */
+  maxGuestsPerDay: number;
+}
+
 export interface CredentialsConfig {
   /** Base64 AES-256 key for users' provider API keys; null disables bring-your-own-key. */
   encryptionKey: string | null;
@@ -83,4 +99,5 @@ export interface AppConfiguration {
   llm: LlmConfig;
   embedding: EmbeddingConfig;
   auth: AuthConfig;
+  demo: DemoConfig;
 }

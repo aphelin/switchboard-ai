@@ -1,39 +1,28 @@
 import type { Metadata } from 'next';
 import { Suspense } from 'react';
 import { GalleryGrid } from '@/components/gallery-grid';
-import { Skeleton } from '@/components/ui/skeleton';
+import { PageHeading } from '@/components/layout/page-heading';
 
 export const metadata: Metadata = {
   title: 'Gallery',
-  description: 'Browse all completed AI-generated images.',
-  openGraph: {
-    title: 'Gallery | Mini AI Toolkit',
-    description: 'Browse all completed AI-generated images.',
-  },
+  description: 'Every completed image generation, newest first.',
 };
 
 function GalleryLoading() {
   return (
-    <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
-      {Array.from({ length: 6 }).map((_, i) => (
-        <Skeleton key={i} className="aspect-square rounded-lg" />
-      ))}
-    </div>
+    <>
+      <PageHeading title="Gallery" sub="Every finished image, newest first." />
+      <div className="grid grid-cols-2 gap-5 sm:grid-cols-3 lg:grid-cols-4">
+        {Array.from({ length: 8 }).map((_, i) => <div key={i} className="shimmer aspect-[4/5] rounded-[26px]" />)}
+      </div>
+    </>
   );
 }
 
 export default function GalleryPage() {
   return (
-    <div className="space-y-6">
-      <div>
-        <h1 className="text-2xl font-bold tracking-tight">Gallery</h1>
-        <p className="text-sm text-muted-foreground">
-          Browse all completed image generations.
-        </p>
-      </div>
-      <Suspense fallback={<GalleryLoading />}>
-        <GalleryGrid />
-      </Suspense>
-    </div>
+    <Suspense fallback={<GalleryLoading />}>
+      <GalleryGrid />
+    </Suspense>
   );
 }

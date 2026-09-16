@@ -40,6 +40,8 @@ model User {
   email         String
   emailVerified Boolean        @default(false)
   image         String?
+  /// Set by Better Auth's anonymous plugin: a one-click demo guest, deleted after DEMO_GUEST_TTL_HOURS.
+  isAnonymous   Boolean?       @default(false)
   createdAt     DateTime       @default(now())
   updatedAt     DateTime       @updatedAt
   sessions      Session[]
@@ -51,6 +53,7 @@ model User {
   providerCredentials ProviderCredential[]
 
   @@unique([email])
+  @@index([isAnonymous, createdAt])
   @@map("user")
 }
 
@@ -274,6 +277,8 @@ model LlmCall {
   status            String // "ok" | "error"
   /// "platform" = the app's provider key (counts toward the daily budget), "user" = the user's own key
   keySource         String   @default("platform")
+  /// Set on rows copied from the demo template into a guest: a record of a past call, not new spend.
+  copiedFromId      String?
   error             String?
   metadata          Json?
   createdAt         DateTime @default(now())

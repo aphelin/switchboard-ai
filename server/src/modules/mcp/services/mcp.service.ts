@@ -6,17 +6,13 @@ import { GenerationService } from '../../generation/services/generation.service'
 import { DocumentsService } from '../../documents/services/documents.service';
 import { RetrievalService } from '../../documents/services/retrieval.service';
 import { ChatService } from '../../chat/services/chat.service';
-import { ImageModel } from '../../../shared/constants/models.constants';
-import {
-  DEFAULT_IMAGE_MODEL,
-  RAG,
-} from '../../../shared/constants/app.constants';
+import { RAG } from '../../../shared/constants/app.constants';
 import { SEARCH_MODES } from '../../documents/dto/search-documents.dto';
 import { GenerationType, JobPriority, JobStatus } from 'generated/prisma/enums';
 import type { SearchMode } from '../../documents/types/documents.types';
 
 export const MCP_SERVER_INFO = {
-  name: 'mini-ai-toolkit',
+  name: 'switchboard-ai',
   version: '1.0.0',
 } as const;
 
@@ -24,7 +20,6 @@ export const MCP_SERVER_INFO = {
 const GENERATION_WAIT_MS = 120_000;
 const DOCUMENT_LIST_LIMIT = 50;
 
-const IMAGE_MODELS = Object.values(ImageModel) as [ImageModel, ...ImageModel[]];
 const GENERATION_STATUSES = Object.values(JobStatus) as [
   JobStatus,
   ...JobStatus[],
@@ -96,7 +91,7 @@ export class McpService {
   createServer(userId: string): McpServer {
     const server = new McpServer(MCP_SERVER_INFO, {
       instructions:
-        'Mini AI Toolkit: generate images/text through an async job pipeline and search or ask questions over uploaded documents (RAG). ' +
+        'Switchboard AI: generate images/text through an async job pipeline and search or ask questions over uploaded documents (RAG). ' +
         'Use ask_documents for questions that documents may answer; use search_documents for raw passages.',
     });
 
@@ -121,9 +116,12 @@ export class McpService {
             .max(5000)
             .describe('Detailed visual description of the image'),
           model: z
-            .enum(IMAGE_MODELS)
+            .string()
+            .max(120)
             .optional()
-            .describe(`Image model id (default "${DEFAULT_IMAGE_MODEL}")`),
+            .describe(
+              'Image model id from GET /api/providers (imageModels), e.g. "platform:flux" (default) or "google:gemini-3.1-flash-image" (needs your own Google key)',
+            ),
           width: z
             .number()
             .int()
@@ -182,6 +180,68 @@ export class McpService {
             final.status === JobStatus.COMPLETED
               ? `Image generated (id ${final.id}): ${final.imageUrl}`
               : `Generation ${final.id} is ${final.status}${final.error ? `: ${final.error}` : ' (still running; check get_generation later)'}`;
+          return ok(text, structured);
+        } catch (error) {
+          return fail(error);
+        }
+      },
+    );
+
+    server.registerTool(
+      'edit_image',
+      {
+        title: 'Edit image',
+        description:
+          'Change one of your finished images with a text instruction (image-to-image, queued job). Waits up to 2 minutes and returns the new image URL. Find the image id with list_generations.',
+        inputSchema: z.object({
+          generationId: z
+            .uuid()
+            .describe('Id of a completed image generation to start from'),
+          prompt: z
+            .string()
+            .min(1)
+            .max(5000)
+            .describe('What to change, as an instruction'),
+          model: z
+            .string()
+            .max(120)
+            .optional()
+            .describe(
+              'Image model id from GET /api/providers (imageModels) with capabilities.edit; default: the included editing model',
+            ),
+        }),
+        annotations: {
+          readOnlyHint: false,
+          destructiveHint: false,
+          idempotentHint: false,
+          openWorldHint: true,
+        },
+      },
+      async ({ generationId, prompt, model }) => {
+        try {
+          const created = await this.generations.create(userId, {
+            prompt,
+            type: GenerationType.IMAGE,
+            enhance: false,
+            priority: JobPriority.HIGH,
+            parameters: { model, sourceGenerationId: generationId },
+          });
+          const final = await this.generations.waitForTerminalStatus(
+            userId,
+            created.id,
+            GENERATION_WAIT_MS,
+          );
+          const structured = {
+            id: final.id,
+            sourceGenerationId: generationId,
+            status: final.status,
+            imageUrl: final.imageUrl,
+            error: final.error,
+          };
+          const text =
+            final.status === JobStatus.COMPLETED
+              ? `Image edited (id ${final.id}, from ${generationId}): ${final.imageUrl}`
+              : `Edit ${final.id} is ${final.status}${final.error ? `: ${final.error}` : ' (still running; check get_generation later)'}`;
           return ok(text, structured);
         } catch (error) {
           return fail(error);

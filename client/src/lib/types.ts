@@ -54,11 +54,14 @@ export interface CreateGenerationPayload {
 }
 
 export interface ImageParameters {
+  /** Image catalog model id (`<provider>:<modelId>`); legacy bare ids are accepted too. */
   model?: string;
   width?: number;
   height?: number;
   seed?: number;
   negativePrompt?: string;
+  /** Edit an existing image: the id of one of your finished image generations. */
+  sourceGenerationId?: string;
 }
 
 export interface TextParameters {
@@ -187,13 +190,22 @@ export interface SearchToolOutput {
   passages: SourcePassage[];
 }
 
-/** Output of the assistant's `generate_image` tool. */
+/** Output of the assistant's `generate_image` and `edit_image` tools. */
 export interface GenerateImageToolOutput {
   generationId: string;
+  /** Set by `edit_image`: the image the edit started from. */
+  sourceGenerationId?: string;
   status: JobStatus;
   imageUrl: string | null;
   error: string | null;
   note?: string;
+}
+
+/** POST /chat/transcribe: a recording turned into text, priced by the seconds billed. */
+export interface TranscriptionResult {
+  text: string;
+  seconds: number;
+  costUsd: number | null;
 }
 
 // ---------------------------------------------------------------------------
@@ -220,6 +232,9 @@ export interface LlmCall {
 }
 
 export type KeySource = 'platform' | 'user';
+
+/** Ledger columns the API can sort by (GET /traces?sort=&order=). */
+export type TraceSortField = 'createdAt' | 'name' | 'model' | 'inputTokens' | 'costUsd' | 'latencyMs' | 'status';
 
 export interface TraceSummary {
   totals: {
@@ -252,6 +267,8 @@ export interface MeResponse {
     id: string;
     name: string;
     email: string;
+    /** A one-click demo guest. */
+    isGuest: boolean;
   };
   usage: {
     spentTodayUsd: number;
@@ -260,6 +277,15 @@ export interface MeResponse {
     /** Estimated spend today on the user's own provider keys (not budgeted). */
     ownKeysSpentTodayUsd: number;
   };
+  /** Set for demo guests: when the session and its data are deleted. */
+  guest: { expiresAt: string } | null;
+}
+
+/** GET /api/demo: whether one-click guest sessions are open. */
+export interface DemoStatus {
+  enabled: boolean;
+  guestTtlHours: number;
+  guestDailyBudgetUsd: number | null;
 }
 
 // ---------------------------------------------------------------------------
@@ -278,9 +304,23 @@ export interface CatalogModel {
   label: string;
   description: string;
   tier: ModelTier;
-  capabilities: { tools: boolean; structuredOutput: boolean };
+  /** `vision`: takes images attached to a chat message. */
+  capabilities: { tools: boolean; structuredOutput: boolean; vision: boolean };
   /** USD per 1M tokens. */
   pricing: { input: number; output: number; cachedInput?: number } | null;
+}
+
+export interface CatalogImageModel {
+  /** `<provider>:<modelId>`, e.g. `google:gemini-3.1-flash-image`. Send this back. */
+  id: string;
+  provider: ProviderId;
+  modelId: string;
+  label: string;
+  description: string;
+  /** USD per image; null when the provider prices image generation by tokens. */
+  pricePerImageUsd: number | null;
+  /** `edit`: takes a source image and a prompt (image-to-image). */
+  capabilities: { edit: boolean };
 }
 
 export interface ProviderStatus {
@@ -296,12 +336,18 @@ export interface ProviderStatus {
   keyPlaceholder: string | null;
   updatedAt: string | null;
   models: CatalogModel[];
+  /** Image models this provider serves (may be empty). */
+  imageModels: CatalogImageModel[];
 }
 
 export interface ProvidersResponse {
-  /** false when the server has no encryption key configured. */
+  /** false when own keys can't be added: see byokDisabledReason. */
   byokEnabled: boolean;
+  /** "server": no encryption key configured; "guest": demo sessions never store keys. */
+  byokDisabledReason?: 'server' | 'guest' | null;
   defaultModel: string;
+  /** Server default image catalog model id, e.g. `platform:flux`. */
+  defaultImageModel: string;
   providers: ProviderStatus[];
 }
 
