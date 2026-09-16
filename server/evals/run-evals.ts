@@ -98,7 +98,7 @@ function loadDataset(evalsDir: string): EvalCase[] {
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
-const EVAL_USER_EMAIL = 'eval-runner@mini-ai-toolkit.local';
+const EVAL_USER_EMAIL = 'eval-runner@switchboard-ai.local';
 
 /** A user row without an account: it owns eval data but has no password and cannot sign in. */
 async function ensureEvalUser(prisma: PrismaService): Promise<string> {

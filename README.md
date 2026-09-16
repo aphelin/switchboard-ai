@@ -165,8 +165,8 @@ Create `server/.env.development` (and `server/.env.production`) and `client/.env
 # server/.env.development
 POSTGRES_USER=postgres
 POSTGRES_PASSWORD=postgres
-POSTGRES_DB=mini_ai_toolkit
-DATABASE_URL=postgresql://postgres:postgres@postgres:5432/mini_ai_toolkit?schema=public
+POSTGRES_DB=switchboard_ai
+DATABASE_URL=postgresql://postgres:postgres@postgres:5432/switchboard_ai?schema=public
 REDIS_HOST=redis
 REDIS_PORT=6379
 POLLINATIONS_API_KEY=your_pollinations_api_key
@@ -269,8 +269,8 @@ npx @modelcontextprotocol/inspector --cli http://localhost:4000/api/mcp --method
 
 | Variable | Description | Default |
 | --- | --- | --- |
-| `POSTGRES_USER` / `POSTGRES_PASSWORD` / `POSTGRES_DB` | PostgreSQL credentials (Docker) | `postgres` / `postgres` / `mini_ai_toolkit` |
-| `DATABASE_URL` | PostgreSQL connection string (pgvector required) | `postgresql://postgres:postgres@postgres:5432/mini_ai_toolkit?schema=public` |
+| `POSTGRES_USER` / `POSTGRES_PASSWORD` / `POSTGRES_DB` | PostgreSQL credentials (Docker) | `postgres` / `postgres` / `switchboard_ai` |
+| `DATABASE_URL` | PostgreSQL connection string (pgvector required) | `postgresql://postgres:postgres@postgres:5432/switchboard_ai?schema=public` |
 | `REDIS_HOST` / `REDIS_PORT` | Redis connection | `redis` (Docker) / `6379` |
 | `POLLINATIONS_API_KEY` | Pollinations.ai API key (images; default LLM provider) | required |
 | `SERVER_PORT` | Backend port | `4000` |

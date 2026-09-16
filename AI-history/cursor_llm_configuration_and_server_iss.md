@@ -555,7 +555,7 @@ Done. Here's a summary of everything changed:
 - Both `eslint-disable` comments removed -- they're no longer needed.
 
 ### Metadata
-- **`layout.tsx`**: Full base metadata with `metadataBase`, `title.template` (`%s | Mini AI Toolkit`), Open Graph, Twitter card, `robots`, `keywords`, and `authors`. All page titles now automatically append ` | Mini AI Toolkit`.
+- **`layout.tsx`**: Full base metadata with `metadataBase`, `title.template` (`%s | Switchboard AI`), Open Graph, Twitter card, `robots`, `keywords`, and `authors`. All page titles now automatically append ` | Switchboard AI`.
 - **`page.tsx`**: Refactored from `'use client'` to a server component -- the client logic moved to a new `home-view.tsx` component. This is required since `metadata` exports only work in server components.
 - **`history/page.tsx`** and **`gallery/page.tsx`**: each got their own `metadata` export with page-specific title and description.
 
