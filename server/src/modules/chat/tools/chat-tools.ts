@@ -50,10 +50,22 @@ export const CHAT_TOOL_APPROVAL: Record<string, ToolApprovalStatus> = {
  */
 export function buildChatTools(deps: ChatToolsDeps) {
   const { userId } = deps;
+  // Tools are built per turn, so citation refs are numbered across every search in
+  // the turn: "[3]" names one passage even after a rephrased second search, and a
+  // passage found twice keeps the ref it got first.
+  const refsByChunk = new Map<string, number>();
+  const refFor = (chunkId: string): number => {
+    let ref = refsByChunk.get(chunkId);
+    if (ref === undefined) {
+      ref = refsByChunk.size + 1;
+      refsByChunk.set(chunkId, ref);
+    }
+    return ref;
+  };
 
   const search_documents = tool({
     description:
-      "Search the user's uploaded documents (semantic + keyword search). Returns the most relevant passages with a ref number to cite. Use it for any question that might be answered by the documents.",
+      "Search the user's uploaded documents (semantic + keyword search). Returns the most relevant passages, each with a ref number to cite; refs stay unique across searches in the same answer. Use it for any question that might be answered by the documents.",
     inputSchema: z.object({
       query: z
         .string()
@@ -81,12 +93,13 @@ export function buildChatTools(deps: ChatToolsDeps) {
         scope: deps.documentIds?.length
           ? 'selected documents'
           : 'all documents',
-        passages: results.map((result, i) => ({
-          ref: i + 1,
+        passages: results.map((result) => ({
+          ref: refFor(result.chunkId),
           chunkId: result.chunkId,
           documentId: result.documentId,
           document: result.documentTitle,
           chunkIndex: result.chunkIndex,
+          section: result.section ?? undefined,
           untrusted: result.flagged,
           content: result.content,
         })),

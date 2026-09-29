@@ -174,8 +174,8 @@ export class DemoTemplateService {
             copyOf(chunk.documentId),
           );
           await tx.$executeRaw`
-            INSERT INTO "DocumentChunk" ("id", "documentId", "index", "content", "tokenCount", "embedding", "createdAt")
-            SELECT pair.new_id, pair.new_document_id, c."index", c."content", c."tokenCount", c."embedding", c."createdAt"
+            INSERT INTO "DocumentChunk" ("id", "documentId", "index", "content", "tokenCount", "section", "embedding", "embeddingModel", "createdAt")
+            SELECT pair.new_id, pair.new_document_id, c."index", c."content", c."tokenCount", c."section", c."embedding", c."embeddingModel", c."createdAt"
             FROM "DocumentChunk" c
             JOIN unnest(${oldChunkIds}::text[], ${newChunkIds}::text[], ${newDocumentIds}::text[])
               AS pair(old_id, new_id, new_document_id)

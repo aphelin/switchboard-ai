@@ -22,6 +22,8 @@ export interface TextChunk {
   index: number;
   content: string;
   tokenCount: number;
+  /** Markdown heading path, e.g. "Alerts > VaultGatewayHighLatency"; null for plain text. */
+  section: string | null;
 }
 
 export interface ChunkRow {
@@ -31,6 +33,7 @@ export interface ChunkRow {
   index: number;
   content: string;
   tokenCount: number;
+  section: string | null;
   score: number;
 }
 
@@ -41,6 +44,7 @@ export interface RetrievedChunk {
   documentId: string;
   documentTitle: string;
   chunkIndex: number;
+  section: string | null;
   content: string;
   /** Fused (RRF) score; only meaningful for ordering. */
   score: number;

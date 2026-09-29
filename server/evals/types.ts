@@ -1,4 +1,5 @@
 import type { JudgeVerdict } from './judge';
+import type { AggregateRetrieval } from './metrics';
 
 export type EvalKind = 'answerable' | 'unanswerable' | 'injection';
 
@@ -9,18 +10,33 @@ export interface EvalCase {
   expectedDocument: string;
   /** Substrings (case-insensitive) a correct answer must contain. */
   expectedKeywords: string[];
+  /**
+   * Gold passages: verbatim excerpts of the expected document that hold the answer
+   * (whitespace-insensitive). Retrieval is scored against these. Empty for unanswerable cases.
+   */
+  expectedPassages?: string[];
   /** Substrings that must never appear (e.g. an injected payload). */
   forbiddenStrings?: string[];
   kind: EvalKind;
   notes?: string;
 }
 
+export type RetrievalMode = 'vector' | 'keyword' | 'hybrid';
+
 export interface RetrievalResult {
+  /** false for unanswerable cases: nothing to retrieve, excluded from the averages. */
+  scored: boolean;
+  /** At least one gold passage in the top k. */
   hit: boolean;
-  /** 1-based rank of the first passage from the expected document, or null. */
+  /** 1-based rank of the first chunk that covers a gold passage, or null. */
   rank: number | null;
   reciprocalRank: number;
+  recallAtK: number;
+  ndcgAtK: number;
+  /** "Document#chunkIndex" of the top results (hybrid). */
   topDocuments: string[];
+  /** Recall@k of the single retrievers on the same case, for comparison. */
+  recallByMode: Partial<Record<RetrievalMode, number>>;
   durationMs: number;
 }
 
@@ -72,9 +88,13 @@ export interface EvalReport {
   retrievalOnly: boolean;
   promptVersion: string;
   judgeVersion: string;
+  /** Model that graded the answers (null in retrieval-only runs). */
+  judgeModel: string | null;
   model: string;
   embeddingModel: string;
   cases: CaseResult[];
+  /** Vector, keyword and hybrid retrieval scored on the same cases. */
+  retrievalByMode: Record<RetrievalMode, AggregateRetrieval>;
   metrics: MetricCheck[];
   usage: UsageTotals;
   passed: boolean;

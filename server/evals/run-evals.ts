@@ -3,10 +3,11 @@
  *
  * Boots the real NestJS application context (same modules, config and models
  * as the server), (re)indexes the fixture documents, then measures:
- *   - retrieval: hit@K and MRR of the expected document (deterministic, free)
+ *   - retrieval: recall@K, MRR and nDCG@K against labelled gold passages, for
+ *     vector, keyword and hybrid search side by side (deterministic, free)
  *   - generation: answers from ChatService.answer, checked deterministically
  *     (expected keywords present, forbidden strings absent) and by an LLM judge
- *     (correctness, faithfulness, abstention on unanswerable questions)
+ *     on a different model (correctness, faithfulness, abstention)
  *
  * Usage (from server/):
  *   npm run eval                     # full run (costs a few cents)
@@ -42,18 +43,35 @@ import {
   buildJudgePrompt,
   JUDGE_INSTRUCTIONS,
   JUDGE_PROMPT_VERSION,
+  judgeModelSettings,
   JudgeSchema,
+  type JudgeModelSettings,
 } from './judge';
-import { formatCaseTable, formatMetrics, formatSummary } from './report';
+import {
+  aggregateRetrieval,
+  coveredPassages,
+  scoreRetrieval,
+  type AggregateRetrieval,
+  type RetrievalScore,
+} from './metrics';
+import {
+  formatCaseTable,
+  formatMetrics,
+  formatModeComparison,
+  formatSummary,
+} from './report';
 import type {
   CaseResult,
   EvalCase,
   EvalReport,
   GenerationResult,
   MetricCheck,
+  RetrievalMode,
   RetrievalResult,
   UsageTotals,
 } from './types';
+
+const MODES: RetrievalMode[] = ['vector', 'keyword', 'hybrid'];
 
 interface Services {
   documents: DocumentsService;
@@ -91,6 +109,9 @@ function loadDataset(evalsDir: string): EvalCase[] {
       throw new Error(
         `Case ${c.id} expects unknown document "${c.expectedDocument}"`,
       );
+    }
+    if (c.kind !== 'unanswerable' && !c.expectedPassages?.length) {
+      throw new Error(`Case ${c.id} has no expectedPassages to score`);
     }
   }
   return cases;
@@ -166,30 +187,94 @@ async function ingestFixtures(
   );
 }
 
+/**
+ * Every gold passage must sit inside a single chunk, or no retriever could ever
+ * return it and the case would fail for a labelling reason. Checked after ingestion.
+ */
+async function assertLabelsReachable(
+  services: Services,
+  dataset: EvalCase[],
+  titles: Map<string, string>,
+): Promise<void> {
+  const chunksByTitle = new Map<string, Array<{ content: string }>>();
+  for (const [id, title] of titles) {
+    chunksByTitle.set(
+      title,
+      await services.documents.getChunks(services.userId, id),
+    );
+  }
+  const unreachable = dataset.flatMap((evalCase) =>
+    (evalCase.expectedPassages ?? []).flatMap((passage, i) => {
+      const chunks = chunksByTitle.get(evalCase.expectedDocument) ?? [];
+      const reachable = chunks.some((chunk) =>
+        coveredPassages(
+          { documentTitle: evalCase.expectedDocument, content: chunk.content },
+          evalCase,
+        ).includes(i),
+      );
+      return reachable ? [] : [`${evalCase.id}: "${passage}"`];
+    }),
+  );
+  if (unreachable.length) {
+    throw new Error(
+      `Gold passages split across chunk boundaries (shorten the label or adjust chunking):\n${unreachable.join('\n')}`,
+    );
+  }
+}
+
 async function evaluateRetrieval(
   services: Services,
   evalCase: EvalCase,
   documentIds: string[],
   runId: string,
-): Promise<RetrievalResult> {
+): Promise<{
+  result: RetrievalResult;
+  byMode: Record<RetrievalMode, RetrievalScore | null>;
+}> {
   const startedAt = Date.now();
-  const results = await services.retrieval.search({
-    userId: services.userId,
-    query: evalCase.question,
-    topK: EVAL_TOP_K,
-    documentIds,
-    traceId: runId,
-  });
-  const index = results.findIndex(
-    (r) => r.documentTitle === evalCase.expectedDocument,
-  );
-  const rank = index >= 0 ? index + 1 : null;
+  const ranked = Object.fromEntries(
+    await Promise.all(
+      MODES.map(async (mode) => [
+        mode,
+        await services.retrieval.search({
+          userId: services.userId,
+          query: evalCase.question,
+          topK: EVAL_TOP_K,
+          documentIds,
+          traceId: runId,
+          mode,
+        }),
+      ]),
+    ),
+  ) as Record<RetrievalMode, Awaited<ReturnType<RetrievalService['search']>>>;
+
+  const byMode = Object.fromEntries(
+    MODES.map((mode) => [
+      mode,
+      scoreRetrieval(evalCase, ranked[mode], EVAL_TOP_K),
+    ]),
+  ) as Record<RetrievalMode, RetrievalScore | null>;
+  const hybrid = byMode.hybrid;
+
   return {
-    hit: rank !== null,
-    rank,
-    reciprocalRank: rank ? 1 / rank : 0,
-    topDocuments: results.map((r) => `${r.documentTitle}#${r.chunkIndex}`),
-    durationMs: Date.now() - startedAt,
+    byMode,
+    result: {
+      scored: hybrid !== null,
+      hit: !!hybrid?.firstRelevantRank,
+      rank: hybrid?.firstRelevantRank ?? null,
+      reciprocalRank: hybrid?.reciprocalRank ?? 0,
+      recallAtK: hybrid?.recallAtK ?? 0,
+      ndcgAtK: hybrid?.ndcgAtK ?? 0,
+      topDocuments: ranked.hybrid.map(
+        (r) => `${r.documentTitle}#${r.chunkIndex}`,
+      ),
+      recallByMode: Object.fromEntries(
+        MODES.flatMap((mode) =>
+          byMode[mode] ? [[mode, byMode[mode].recallAtK]] : [],
+        ),
+      ),
+      durationMs: Date.now() - startedAt,
+    },
   };
 }
 
@@ -201,6 +286,7 @@ async function evaluateGeneration(
   evalCase: EvalCase,
   documentIds: string[],
   runId: string,
+  judgeSettings: JudgeModelSettings,
 ): Promise<GenerationResult> {
   const startedAt = Date.now();
   const answer = await services.chat.answer({
@@ -229,13 +315,15 @@ async function evaluateGeneration(
       traceId: runId,
       userId: services.userId,
       metadata: { caseId: evalCase.id, judgeVersion: JUDGE_PROMPT_VERSION },
-      model: 'main',
+      model: judgeSettings.model,
+      temperature: judgeSettings.temperature,
       instructions: JUDGE_INSTRUCTIONS,
       prompt: buildJudgePrompt({
         question: evalCase.question,
         kind: evalCase.kind,
         expectedKeywords: evalCase.expectedKeywords,
         sources: answer.sources.map((s) => ({
+          ref: s.ref,
           document: s.document,
           content: s.content,
         })),
@@ -253,13 +341,13 @@ async function evaluateGeneration(
   if (evalCase.kind === 'unanswerable') {
     if (!judge?.abstained) failures.push('did not abstain');
   } else {
-    const keywordsOk = keywordsMissing.length === 0;
-    const judgeOk = (judge?.correctness ?? 0) >= 4;
-    if (!keywordsOk && !judgeOk) {
-      failures.push(
-        `missing: ${keywordsMissing.join(', ')}` +
-          (judge ? ` (judge ${judge.correctness}/5)` : ''),
-      );
+    // Both must hold: keywords catch a wrong number the judge might wave through,
+    // the judge catches a hedged or contradictory answer that still contains them.
+    if (keywordsMissing.length > 0) {
+      failures.push(`missing: ${keywordsMissing.join(', ')}`);
+    }
+    if (judge && judge.correctness < 4) {
+      failures.push(`judge correctness ${judge.correctness}/5`);
     }
     if (answer.searches === 0) failures.push('did not search the documents');
   }
@@ -310,6 +398,7 @@ const rate = (values: boolean[]): number | null =>
 
 function computeMetrics(
   cases: CaseResult[],
+  hybrid: AggregateRetrieval,
   retrievalOnly: boolean,
 ): MetricCheck[] {
   const check = (
@@ -332,14 +421,15 @@ function computeMetrics(
 
   const metrics: MetricCheck[] = [
     check(
-      'retrieval hit@' + EVAL_TOP_K,
-      rate(cases.map((c) => c.retrieval.hit)),
-      THRESHOLDS.retrievalHitAtK,
+      `retrieval recall@${EVAL_TOP_K}`,
+      hybrid.recallAtK,
+      THRESHOLDS.retrievalRecallAtK,
     ),
+    check('retrieval MRR', hybrid.mrr, THRESHOLDS.retrievalMrr),
     check(
-      'retrieval MRR',
-      average(cases.map((c) => c.retrieval.reciprocalRank)),
-      THRESHOLDS.retrievalMrr,
+      `retrieval nDCG@${EVAL_TOP_K}`,
+      hybrid.ndcgAtK,
+      THRESHOLDS.retrievalNdcgAtK,
     ),
   ];
   if (retrievalOnly) return metrics;
@@ -482,21 +572,39 @@ async function main(): Promise<void> {
       );
     }
 
-    const { ids: fixtureIds } = await ingestFixtures(services, evalsDir);
+    // Fails before any money is spent if the judge would grade its own model.
+    const judgeSettings = retrievalOnly
+      ? null
+      : judgeModelSettings(process.env.EVAL_JUDGE_MODEL, mainModel);
+
+    const { ids: fixtureIds, titles } = await ingestFixtures(
+      services,
+      evalsDir,
+    );
+    await assertLabelsReachable(services, dataset, titles);
 
     const cases: CaseResult[] = [];
+    const scoresByMode: Record<RetrievalMode, Array<RetrievalScore | null>> = {
+      vector: [],
+      keyword: [],
+      hybrid: [],
+    };
     for (const evalCase of dataset) {
-      const retrieval = await evaluateRetrieval(
+      const { result: retrieval, byMode } = await evaluateRetrieval(
         services,
         evalCase,
         fixtureIds,
         runId,
       );
+      MODES.forEach((mode) => scoresByMode[mode].push(byMode[mode]));
       cases.push({ case: evalCase, retrieval });
       console.log(
-        `retrieval  ${evalCase.id.padEnd(30)} rank=${retrieval.rank ?? '-'}  top=${retrieval.topDocuments.slice(0, 3).join(' | ')}`,
+        `retrieval  ${evalCase.id.padEnd(30)} rank=${retrieval.scored ? (retrieval.rank ?? 'miss') : 'n/a'}  top=${retrieval.topDocuments.slice(0, 3).join(' | ')}`,
       );
     }
+    const retrievalByMode = Object.fromEntries(
+      MODES.map((mode) => [mode, aggregateRetrieval(scoresByMode[mode])]),
+    ) as Record<RetrievalMode, AggregateRetrieval>;
 
     if (!retrievalOnly) {
       await mapWithConcurrency(
@@ -509,6 +617,7 @@ async function main(): Promise<void> {
               result.case,
               fixtureIds,
               runId,
+              judgeSettings!,
             );
             const g = result.generation;
             console.log(
@@ -525,7 +634,11 @@ async function main(): Promise<void> {
       );
     }
 
-    const metrics = computeMetrics(cases, retrievalOnly);
+    const metrics = computeMetrics(
+      cases,
+      retrievalByMode.hybrid,
+      retrievalOnly,
+    );
     const usage = await collectUsage(services.trace, services.userId, runId);
     passed =
       metrics.every((m) => m.passed !== false) && cases.every((c) => !c.error);
@@ -537,9 +650,11 @@ async function main(): Promise<void> {
       retrievalOnly,
       promptVersion: ASSISTANT_PROMPT_VERSION,
       judgeVersion: JUDGE_PROMPT_VERSION,
+      judgeModel: judgeSettings?.model ?? null,
       model: registry.resolveModelId('main'),
       embeddingModel: embedding.modelName,
       cases,
+      retrievalByMode,
       metrics,
       usage,
       passed,
@@ -547,6 +662,7 @@ async function main(): Promise<void> {
 
     const file = writeReport(evalsDir, report);
     console.log('\n' + formatCaseTable(cases, retrievalOnly));
+    console.log('\n' + formatModeComparison(retrievalByMode));
     console.log('\n' + formatMetrics(metrics));
     console.log('\n' + formatSummary(report));
     console.log(`Report written to ${file}`);

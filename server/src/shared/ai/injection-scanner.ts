@@ -65,11 +65,12 @@ const RAW_PATTERNS: Array<{ pattern: RegExp; reason: string }> = [
     reason: 'embeds a remote image (possible data exfiltration)',
   },
   {
-    pattern: /[​-‍⁠﻿]/,
+    pattern: /[\u200B-\u200D\u2060\uFEFF]/,
     reason: 'contains invisible zero-width characters',
   },
   {
-    pattern: /(?:[A-Za-z0-9+/]{4}){20,}(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?/,
+    pattern:
+      /(?:[A-Za-z0-9+/]{4}){20,}(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?/,
     reason: 'contains a long base64 blob (possibly an encoded instruction)',
   },
 ];
@@ -93,7 +94,7 @@ const LEET: Record<string, string> = {
 function normalize(text: string): string {
   return text
     .normalize('NFKC')
-    .replace(/[​-‍⁠﻿­]/g, '')
+    .replace(/[\u200B-\u200D\u2060\uFEFF\u00AD]/g, '')
     .replace(/[a-z]*[013457@$][a-z013457@$]*/gi, (word) =>
       /[a-z]/i.test(word) ? word.replace(/[013457@$]/g, (c) => LEET[c]) : word,
     );

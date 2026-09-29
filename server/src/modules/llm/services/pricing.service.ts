@@ -110,7 +110,12 @@ export class PricingService implements OnModuleInit {
     return this.lookupIn(this.pricing, model);
   }
 
-  /** Exact id first, then without the provider prefix ("openai/gpt-5.4-mini" -> "gpt-5.4-mini") and dated response ids ("gpt-5.4-nano-2026-03-17"). */
+  /**
+   * Exact id first, then without the provider prefix ("openai/gpt-5.4-mini" ->
+   * "gpt-5.4-mini") and dated or suffixed response ids ("gpt-5.4-nano-2026-03-17").
+   * The longest matching key wins: "gemini-2.5-flash-lite-preview" is priced as
+   * "gemini-2.5-flash-lite", not as the more expensive "gemini-2.5-flash".
+   */
   private lookupIn<T>(
     table: Map<string, T>,
     model: string | undefined,
@@ -122,11 +127,18 @@ export class PricingService implements OnModuleInit {
     const bare = model.includes('/')
       ? model.slice(model.indexOf('/') + 1)
       : model;
+    let best: { length: number; value: T } | undefined;
     for (const [key, value] of table) {
       const bareKey = key.includes('/') ? key.slice(key.indexOf('/') + 1) : key;
-      if (bareKey === bare || bare.startsWith(`${bareKey}-`)) return value;
+      if (bareKey === bare) return value;
+      if (
+        bare.startsWith(`${bareKey}-`) &&
+        bareKey.length > (best?.length ?? -1)
+      ) {
+        best = { length: bareKey.length, value };
+      }
     }
-    return undefined;
+    return best?.value;
   }
 
   /** Pollinations serves the audio list next to the text one: ".../v1" -> ".../audio/models". */

@@ -73,12 +73,17 @@ const formatCircuitBreakerError = (): ExceptionResponse => ({
   error: 'Service Unavailable',
 });
 
+/** Shown for any unexpected failure: the details go to the log, never to the client. */
+const INTERNAL_ERROR_MESSAGE = 'Internal server error';
+
 const formatAxiosError = (error: AxiosError): ExceptionResponse => {
   const status = error.response?.status ?? HttpStatus.BAD_GATEWAY;
+  // An upstream 4xx explains what was wrong with the request; anything else is an outage.
   const message =
-    (error.response?.data as { message?: string })?.message ??
-    error.message ??
-    'External request failed';
+    status < 500
+      ? ((error.response?.data as { message?: string })?.message ??
+        'External request failed')
+      : 'External service unavailable';
   const error_label = error.response?.status
     ? `HTTP ${error.response.status}`
     : 'Bad Gateway';
@@ -99,33 +104,41 @@ const mapPrismaCodeToStatus = (code: string): number => {
   }
 };
 
+/** Prisma messages quote the query, model and column names, so clients get a fixed sentence per code. */
+const PRISMA_CLIENT_MESSAGES: Record<string, string> = {
+  P2002: 'A record with these values already exists',
+  P2003: 'A related record does not exist',
+  P2025: 'Record not found',
+};
+
 const formatPrismaError = (error: Error): ExceptionResponse => {
   if (error instanceof PrismaClientKnownRequestError) {
+    const status = mapPrismaCodeToStatus(error.code);
     return {
-      status: mapPrismaCodeToStatus(error.code),
-      message: error.message,
-      error: 'Database Error',
+      status,
+      message: PRISMA_CLIENT_MESSAGES[error.code] ?? INTERNAL_ERROR_MESSAGE,
+      error: status < 500 ? statusLabel(status) : 'Internal Server Error',
     };
   }
 
   if (error instanceof PrismaClientValidationError) {
     return {
       status: HttpStatus.BAD_REQUEST,
-      message: error.message,
-      error: 'Validation Error',
+      message: 'Invalid request',
+      error: 'Bad Request',
     };
   }
 
   return {
     status: HttpStatus.INTERNAL_SERVER_ERROR,
-    message: error.message,
-    error: 'Database Error',
+    message: INTERNAL_ERROR_MESSAGE,
+    error: 'Internal Server Error',
   };
 };
 
-const formatGenericError = (error: unknown): ExceptionResponse => ({
+const formatGenericError = (): ExceptionResponse => ({
   status: HttpStatus.INTERNAL_SERVER_ERROR,
-  message: error instanceof Error ? error.message : 'Internal server error',
+  message: INTERNAL_ERROR_MESSAGE,
   error: 'Internal Server Error',
 });
 
@@ -176,14 +189,15 @@ export class HttpExceptionFilter implements ExceptionFilter {
       return formatPrismaError(exception);
     }
 
-    return formatGenericError(exception);
+    return formatGenericError();
   }
 
   private logException(exception: unknown, result: ExceptionResponse): void {
     if (result.status >= 500) {
+      // The full error (message, stack, Prisma details) is only ever logged.
       this.logger.error(
         { err: exception, status: result.status },
-        result.message,
+        exception instanceof Error ? exception.message : result.message,
       );
     } else {
       this.logger.warn({ status: result.status }, result.message);

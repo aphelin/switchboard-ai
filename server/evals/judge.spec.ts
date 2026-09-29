@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import {
   buildJudgePrompt,
+  DEFAULT_JUDGE_MODEL,
+  judgeModelSettings,
   JudgeSchema,
   redactInjectionAttempts,
 } from './judge';
@@ -96,5 +98,27 @@ describe('JudgeSchema', () => {
         reasoning: 'ok',
       }).success,
     ).toBe(false);
+  });
+});
+
+describe('judgeModelSettings', () => {
+  it('uses the configured judge model at temperature 0', () => {
+    expect(
+      judgeModelSettings('google/gemini-3.8-flash', 'openai/gpt-5.4-mini'),
+    ).toEqual({ model: 'google/gemini-3.8-flash', temperature: 0 });
+    expect(judgeModelSettings(undefined, 'openai/gpt-5.4-mini')).toEqual({
+      model: DEFAULT_JUDGE_MODEL,
+      temperature: 0,
+    });
+  });
+
+  it('refuses a judge model equal to the answering model', () => {
+    expect(() =>
+      judgeModelSettings('openai/gpt-5.4-mini', 'openai/gpt-5.4-mini'),
+    ).toThrow(/different model/);
+    // The same model behind another provider prefix is still the same model.
+    expect(() =>
+      judgeModelSettings('gpt-5.4-mini', 'openai/gpt-5.4-mini'),
+    ).toThrow(/different model/);
   });
 });

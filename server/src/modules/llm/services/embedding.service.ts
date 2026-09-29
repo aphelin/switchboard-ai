@@ -2,9 +2,11 @@ import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { embedMany, type EmbeddingModel } from 'ai';
 import {
+  AutoTokenizer,
   env as transformersEnv,
   pipeline,
   type FeatureExtractionPipeline,
+  type PreTrainedTokenizer,
 } from '@huggingface/transformers';
 import { ModelRegistryService } from './model-registry.service';
 import { TraceService } from '../../observability/services/trace.service';
@@ -14,10 +16,11 @@ import type {
 } from '../../../config/configuration.interface';
 import { EMBEDDING_BATCH_SIZE } from '../../../shared/constants/app.constants';
 import type { TraceContext } from '../types/llm.types';
-
-/** BGE models are trained with this prefix on the query side (not on passages). */
-const BGE_QUERY_PREFIX =
-  'Represent this sentence for searching relevant passages: ';
+import {
+  embeddingProfile,
+  type EmbeddingProfile,
+} from '../catalog/embedding-profiles';
+import { estimateTokens } from '../../../shared/ai/estimate-tokens';
 
 /**
  * Turns text into vectors for semantic search. The default runs a small
@@ -29,7 +32,9 @@ const BGE_QUERY_PREFIX =
 export class EmbeddingService implements OnModuleInit {
   private readonly logger = new Logger(EmbeddingService.name);
   private readonly config: EmbeddingConfig;
+  private readonly profile: EmbeddingProfile;
   private localPipeline?: Promise<FeatureExtractionPipeline>;
+  private localTokenizer?: Promise<PreTrainedTokenizer>;
   private remoteModel?: EmbeddingModel;
 
   constructor(
@@ -38,6 +43,7 @@ export class EmbeddingService implements OnModuleInit {
     private readonly trace: TraceService,
   ) {
     this.config = configService.get('embedding', { infer: true });
+    this.profile = embeddingProfile(this.config.model);
   }
 
   get dimensions(): number {
@@ -70,31 +76,38 @@ export class EmbeddingService implements OnModuleInit {
     }
   }
 
+  /**
+   * Tokens in `text` as the embedding model counts them, so chunks are sized
+   * against the model's real input window. Hosted models fall back to an estimate.
+   */
+  async countTokens(text: string): Promise<number> {
+    if (this.config.provider !== 'local') return estimateTokens(text);
+    const tokenizer = await this.getLocalTokenizer();
+    return tokenizer.encode(text).length;
+  }
+
   /** Embeds passages for indexing (title + chunk text is passed by the caller). */
   async embedDocuments(
     texts: string[],
     context: TraceContext = {},
   ): Promise<number[][]> {
     if (texts.length === 0) return [];
+    const inputs = texts.map((text) => `${this.profile.documentPrefix}${text}`);
     return this.timed('embedding.documents', context, texts.length, () =>
-      this.embedBatched(texts),
+      this.embedBatched(inputs),
     );
   }
 
-  /** Embeds a search query (applies the model's query instruction if it has one). */
+  /** Embeds a search query with the model family's query instruction, if it has one. */
   async embedQuery(
     text: string,
     context: TraceContext = {},
   ): Promise<number[]> {
-    const input = this.isBgeModel ? `${BGE_QUERY_PREFIX}${text}` : text;
+    const input = `${this.profile.queryPrefix}${text}`;
     const [vector] = await this.timed('embedding.query', context, 1, () =>
       this.embedBatched([input]),
     );
     return vector;
-  }
-
-  private get isBgeModel(): boolean {
-    return /bge/i.test(this.config.model);
   }
 
   private async embedBatched(texts: string[]): Promise<number[][]> {
@@ -114,8 +127,8 @@ export class EmbeddingService implements OnModuleInit {
   private async embedLocal(texts: string[]): Promise<number[][]> {
     const extractor = await this.getLocalPipeline();
     const output = await extractor(texts, {
-      // BGE uses the [CLS] token as the sentence vector; MiniLM-style models use mean pooling.
-      pooling: this.isBgeModel ? 'cls' : 'mean',
+      // BGE uses the [CLS] token as the sentence vector; MiniLM, E5 and Nomic use mean pooling.
+      pooling: this.profile.pooling,
       normalize: true,
     });
     return output.tolist() as number[][];
@@ -148,6 +161,18 @@ export class EmbeddingService implements OnModuleInit {
       });
     }
     return this.localPipeline;
+  }
+
+  private getLocalTokenizer(): Promise<PreTrainedTokenizer> {
+    if (!this.localTokenizer) {
+      transformersEnv.cacheDir = this.config.cacheDir;
+      transformersEnv.allowLocalModels = false;
+      this.localTokenizer = AutoTokenizer.from_pretrained(this.config.model);
+      this.localTokenizer.catch(() => {
+        this.localTokenizer = undefined;
+      });
+    }
+    return this.localTokenizer;
   }
 
   private assertDimensions(vectors: number[][]): void {

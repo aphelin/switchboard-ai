@@ -235,12 +235,9 @@ async function main(): Promise<void> {
     );
 
     console.log('\n[key submission]');
-    const badProvider = await send(
-      alice,
-      'PUT',
-      '/api/providers/mistral/key',
-      { apiKey: 'x'.repeat(40) },
-    );
+    const badProvider = await send(alice, 'PUT', '/api/providers/mistral/key', {
+      apiKey: 'x'.repeat(40),
+    });
     check(
       badProvider.status === 400,
       `unknown provider is rejected (${badProvider.status})`,
@@ -394,7 +391,10 @@ async function main(): Promise<void> {
       `Bob asking for the same model is not served by Alice's key (${bobSameModel.status})`,
     );
     const bobDelete = await send(bob, 'DELETE', '/api/providers/anthropic/key');
-    check(bobDelete.status === 204, `Bob's delete is a no-op (${bobDelete.status})`);
+    check(
+      bobDelete.status === 204,
+      `Bob's delete is a no-op (${bobDelete.status})`,
+    );
     const row = await prisma.providerCredential.findUnique({
       where: { userId_provider: { userId: aliceId, provider: 'anthropic' } },
     });
@@ -456,7 +456,10 @@ async function main(): Promise<void> {
         encryptedKey: encryptedGoogleKey,
         keyHint: googleKey.slice(-4),
       },
-      update: { encryptedKey: encryptedGoogleKey, keyHint: googleKey.slice(-4) },
+      update: {
+        encryptedKey: encryptedGoogleKey,
+        keyHint: googleKey.slice(-4),
+      },
     });
     const imageJob = await send<GenerationBody>(
       alice,

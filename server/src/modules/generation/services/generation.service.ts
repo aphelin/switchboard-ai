@@ -2,6 +2,8 @@ import {
   Injectable,
   NotFoundException,
   BadRequestException,
+  HttpException,
+  HttpStatus,
   Logger,
 } from '@nestjs/common';
 import { InjectQueue } from '@nestjs/bullmq';
@@ -23,6 +25,7 @@ import {
   JOB_ATTEMPTS,
   JOB_BACKOFF_DELAY,
   BULLMQ_PRIORITY,
+  MAX_IN_FLIGHT_GENERATIONS,
 } from '../../../shared/constants/app.constants';
 import { GenerationType, JobStatus, JobPriority } from 'generated/prisma/enums';
 import type { ImageRoute } from '../../llm/types/llm.types';
@@ -111,6 +114,7 @@ export class GenerationService {
       ? (dto.parameters as ImageParameters | undefined)
       : undefined;
     const sourceGenerationId = imageParams?.sourceGenerationId;
+    await this.assertBelowInFlightLimit(userId);
     if (sourceGenerationId)
       await this.assertEditable(userId, sourceGenerationId);
 
@@ -249,6 +253,7 @@ export class GenerationService {
       );
     }
 
+    await this.assertBelowInFlightLimit(userId);
     const stored = generation.parameters as {
       llmModel?: string;
       model?: string;
@@ -345,9 +350,18 @@ export class GenerationService {
 
     const storageKey = (generation.parameters as { storageKey?: string } | null)
       ?.storageKey;
-    if (storageKey) await this.storage.delete(storageKey);
-
     await this.generationRepository.delete(id);
+    // Demo guests get copies that point at the template's files: a file is only
+    // removed when no other generation still shows it.
+    if (
+      storageKey &&
+      (await this.generationRepository.countOthersUsingStorageKey(
+        storageKey,
+        id,
+      )) === 0
+    ) {
+      await this.storage.delete(storageKey);
+    }
     this.logger.log(`Generation ${id} deleted`);
   }
 
@@ -383,6 +397,20 @@ export class GenerationService {
       await this.budget.assertWithinBudget(userId);
     }
     return { imageRoute };
+  }
+
+  private async assertBelowInFlightLimit(userId: string): Promise<void> {
+    const inFlight = await this.generationRepository.countInFlight(userId);
+    if (inFlight >= MAX_IN_FLIGHT_GENERATIONS) {
+      throw new HttpException(
+        {
+          statusCode: HttpStatus.TOO_MANY_REQUESTS,
+          error: 'Too Many Requests',
+          message: `You already have ${inFlight} generations in progress. Wait for one to finish before starting another.`,
+        },
+        HttpStatus.TOO_MANY_REQUESTS,
+      );
+    }
   }
 
   /** An edit starts from one of the user's own finished images; anything else is refused before queueing. */

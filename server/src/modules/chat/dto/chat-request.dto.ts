@@ -6,8 +6,14 @@ import { z } from 'zod';
  * (a catalog id from GET /api/providers; default: the included model).
  * Message contents are validated separately with `validateUIMessages`.
  */
+/**
+ * Conversation ids are chosen by the client and become part of attachment storage
+ * paths, so only URL- and path-safe characters are accepted ("../images" is not an id).
+ */
+export const CONVERSATION_ID = /^[A-Za-z0-9_-]{1,64}$/;
+
 export const ChatRequestSchema = z.object({
-  id: z.string().min(1).max(64),
+  id: z.string().regex(CONVERSATION_ID),
   messages: z.array(z.unknown()).min(1).max(200),
   trigger: z.enum(['submit-message', 'regenerate-message']).optional(),
   messageId: z.string().optional(),

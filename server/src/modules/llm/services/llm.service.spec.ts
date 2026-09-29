@@ -212,3 +212,84 @@ describe('LlmService on the platform key', () => {
     });
   });
 });
+
+describe('LlmService.streamText', () => {
+  /**
+   * A provider stream that sends one text delta and then hangs, like a long
+   * reply. Like a real fetch, it errors when the request is aborted.
+   */
+  const hangingStream = (capture?: (options: unknown) => void) =>
+    new MockLanguageModelV4({
+      doStream: (options) => {
+        capture?.(options);
+        return Promise.resolve({
+          stream: new ReadableStream({
+            start(controller) {
+              options.abortSignal?.addEventListener('abort', () =>
+                controller.error(new DOMException('aborted', 'AbortError')),
+              );
+              controller.enqueue({ type: 'stream-start', warnings: [] });
+              controller.enqueue({ type: 'text-start', id: 't1' });
+              controller.enqueue({
+                type: 'text-delta',
+                id: 't1',
+                delta: 'Hel',
+              });
+            },
+          }),
+        });
+      },
+    });
+
+  it('records the usage of a stopped stream', async () => {
+    const { llm, records } = setup();
+    const route = userRoute(hangingStream());
+    const controller = new AbortController();
+
+    const result = llm.streamText({
+      name: 'chat.stream',
+      userId: 'user-1',
+      route,
+      prompt: 'Tell me a very long story about lighthouses. '.repeat(40),
+      abortSignal: controller.signal,
+    });
+    for await (const part of result.stream) {
+      if (part.type === 'text-delta') controller.abort();
+    }
+    await vi.waitFor(() => expect(records).toHaveLength(1));
+    // Recorded once: an abort is not also reported as an end or an error.
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(records).toHaveLength(1);
+
+    expect(records[0]).toMatchObject({
+      name: 'chat.stream',
+      userId: 'user-1',
+      keySource: 'user',
+      status: 'ok',
+      metadata: expect.objectContaining({ aborted: true }) as unknown,
+    });
+    // The unfinished call is charged for its prompt, so a stop is never free.
+    expect(records[0].inputTokens).toBeGreaterThan(400);
+    expect(records[0].costUsd).toBeGreaterThan(0);
+  });
+
+  it('applies a default output token cap to streams', async () => {
+    const { llm } = setup();
+    let callOptions: { maxOutputTokens?: number } | undefined;
+    const controller = new AbortController();
+    const result = llm.streamText({
+      name: 'chat.stream',
+      route: userRoute(
+        hangingStream((options) => {
+          callOptions = options as { maxOutputTokens?: number };
+        }),
+      ),
+      prompt: 'hi',
+      abortSignal: controller.signal,
+    });
+    for await (const part of result.stream) {
+      if (part.type === 'text-delta') controller.abort();
+    }
+    expect(callOptions?.maxOutputTokens).toBe(8192);
+  });
+});

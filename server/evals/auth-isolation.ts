@@ -4,6 +4,7 @@
  *   - two users cannot see, search, change or stream each other's data
  *   - API keys authenticate as their owner (x-api-key and Bearer), bad keys are rejected
  *   - a conversation id owned by one user cannot be written by another
+ *   - conversation ids with path characters are rejected
  *
  *   npm run test:auth               # needs the API running (API_URL, default http://localhost:4000)
  *   npm run test:auth -- --skip-llm # skips the chat check (the only step that calls an LLM)
@@ -203,6 +204,20 @@ async function main(): Promise<void> {
     },
   );
   check(badKey.status === 401, `invalid key is rejected (${badKey.status})`);
+
+  console.log('\n[conversation ids are path-safe]');
+  // Ids become part of attachment storage paths: "../images" must never be accepted.
+  for (const badId of ['../images', 'a/b']) {
+    const traversal = await alice.request(
+      'POST',
+      '/api/chat',
+      chatBody(badId, `alice-bad-${stamp}`),
+    );
+    check(
+      traversal.status === 400,
+      `a conversation id like "${badId}" is rejected before anything runs (${traversal.status})`,
+    );
+  }
 
   if (SKIP_LLM) {
     console.log('\n[conversation ownership] skipped (--skip-llm)');

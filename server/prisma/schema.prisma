@@ -35,21 +35,21 @@ enum JobPriority {
 // ---------------------------------------------------------------------------
 
 model User {
-  id            String         @id
-  name          String
-  email         String
-  emailVerified Boolean        @default(false)
-  image         String?
+  id                  String               @id
+  name                String
+  email               String
+  emailVerified       Boolean              @default(false)
+  image               String?
   /// Set by Better Auth's anonymous plugin: a one-click demo guest, deleted after DEMO_GUEST_TTL_HOURS.
-  isAnonymous   Boolean?       @default(false)
-  createdAt     DateTime       @default(now())
-  updatedAt     DateTime       @updatedAt
-  sessions      Session[]
-  accounts      Account[]
-  generations   Generation[]
-  documents     Document[]
-  conversations Conversation[]
-  llmCalls      LlmCall[]
+  isAnonymous         Boolean?             @default(false)
+  createdAt           DateTime             @default(now())
+  updatedAt           DateTime             @updatedAt
+  sessions            Session[]
+  accounts            Account[]
+  generations         Generation[]
+  documents           Document[]
+  conversations       Conversation[]
+  llmCalls            LlmCall[]
   providerCredentials ProviderCredential[]
 
   @@unique([email])
@@ -215,15 +215,19 @@ model Document {
 }
 
 model DocumentChunk {
-  id         String                      @id @default(uuid())
-  documentId String
-  document   Document                    @relation(fields: [documentId], references: [id], onDelete: Cascade)
-  index      Int
-  content    String
-  tokenCount Int
+  id             String                      @id @default(uuid())
+  documentId     String
+  document       Document                    @relation(fields: [documentId], references: [id], onDelete: Cascade)
+  index          Int
+  content        String
+  tokenCount     Int
+  /// Heading path the chunk sits under in a markdown document ("Setup > Keys"), for citations.
+  section        String?
   /// Dimension must match EMBEDDING_DIMENSIONS. HNSW + full-text indexes are created at startup (see DocumentsRepository).
-  embedding  Unsupported("vector(384)")?
-  createdAt  DateTime                    @default(now())
+  embedding      Unsupported("vector(384)")?
+  /// Model that produced `embedding`. Search only compares vectors from the configured model.
+  embeddingModel String?
+  createdAt      DateTime                    @default(now())
 
   @@unique([documentId, index])
 }

@@ -143,14 +143,24 @@ export class DocumentsRepository implements OnModuleInit {
     return this.prisma.documentChunk.findMany({
       where: { documentId },
       orderBy: { index: 'asc' },
-      select: { id: true, index: true, content: true, tokenCount: true },
+      select: {
+        id: true,
+        index: true,
+        content: true,
+        tokenCount: true,
+        section: true,
+      },
     });
   }
 
-  /** Replaces a document's chunks atomically (re-indexing never leaves a half-indexed document). */
+  /**
+   * Replaces a document's chunks atomically: re-indexing never leaves a
+   * half-indexed document, and the old chunks stay searchable until the swap.
+   */
   async replaceChunks(
     documentId: string,
     chunks: Array<TextChunk & { embedding: number[] }>,
+    embeddingModel: string,
   ): Promise<void> {
     await this.prisma.$transaction(async (tx) => {
       await tx.documentChunk.deleteMany({ where: { documentId } });
@@ -158,62 +168,91 @@ export class DocumentsRepository implements OnModuleInit {
 
       const values = chunks.map(
         (chunk) =>
-          Prisma.sql`(${randomUUID()}, ${documentId}, ${chunk.index}, ${chunk.content}, ${chunk.tokenCount}, ${toVectorLiteral(chunk.embedding)}::vector)`,
+          Prisma.sql`(${randomUUID()}, ${documentId}, ${chunk.index}, ${chunk.content}, ${chunk.tokenCount}, ${chunk.section}, ${toVectorLiteral(chunk.embedding)}::vector, ${embeddingModel})`,
       );
       await tx.$executeRaw(
-        Prisma.sql`INSERT INTO "DocumentChunk" ("id", "documentId", "index", "content", "tokenCount", "embedding") VALUES ${Prisma.join(values)}`,
+        Prisma.sql`INSERT INTO "DocumentChunk" ("id", "documentId", "index", "content", "tokenCount", "section", "embedding", "embeddingModel") VALUES ${Prisma.join(values)}`,
       );
     });
   }
 
   /**
    * Nearest neighbours by cosine similarity (score = 1 - cosine distance).
-   * The owner filter is part of the query: filtering results afterwards would let
-   * other users' passages take the top-k slots and silently shrink the result.
+   *
+   * The owner filter is part of the query, and the HNSW scan is iterative: a
+   * plain HNSW scan returns about `ef_search` (40) nearest chunks across all
+   * users and only then applies the WHERE clause, so a user with few documents
+   * in a large table would get fewer than `limit` results, or none. With
+   * `iterative_scan` (pgvector 0.8+) the index keeps scanning until the filtered
+   * result is full. Only vectors from the configured embedding model are
+   * compared: a vector from another model lives in a different space.
    */
-  vectorSearch(
-    userId: string,
-    embedding: number[],
-    limit: number,
-    documentIds?: string[],
-  ): Promise<ChunkRow[]> {
-    const vector = toVectorLiteral(embedding);
-    return this.prisma.$queryRaw<ChunkRow[]>(Prisma.sql`
-      SELECT c.id, c."documentId", d.title AS "documentTitle", c.index, c.content, c."tokenCount",
-             1 - (c.embedding <=> ${vector}::vector) AS score
-      FROM "DocumentChunk" c
-      JOIN "Document" d ON d.id = c."documentId"
-      WHERE d."userId" = ${userId}
-        AND d.status = 'READY'
-        AND c.embedding IS NOT NULL
-        ${this.documentFilter(documentIds)}
-      ORDER BY c.embedding <=> ${vector}::vector
-      LIMIT ${limit}
-    `);
+  vectorSearch(params: {
+    userId: string;
+    embedding: number[];
+    embeddingModel: string;
+    limit: number;
+    documentIds?: string[];
+  }): Promise<ChunkRow[]> {
+    const vector = toVectorLiteral(params.embedding);
+    return this.prisma.$transaction(async (tx) => {
+      await tx.$executeRawUnsafe(
+        'SET LOCAL hnsw.iterative_scan = strict_order',
+      );
+      return tx.$queryRaw<ChunkRow[]>(Prisma.sql`
+        SELECT c.id, c."documentId", d.title AS "documentTitle", c.index, c.content, c."tokenCount", c.section,
+               1 - (c.embedding <=> ${vector}::vector) AS score
+        FROM "DocumentChunk" c
+        JOIN "Document" d ON d.id = c."documentId"
+        WHERE d."userId" = ${params.userId}
+          AND c."embeddingModel" = ${params.embeddingModel}
+          AND c.embedding IS NOT NULL
+          ${this.documentFilter(params.documentIds)}
+        ORDER BY c.embedding <=> ${vector}::vector
+        LIMIT ${params.limit}
+      `);
+    });
   }
 
-  /** Postgres full-text search (BM25-like ranking via ts_rank_cd), scoped to the owner. */
-  keywordSearch(
-    userId: string,
-    query: string,
-    limit: number,
-    documentIds?: string[],
-  ): Promise<ChunkRow[]> {
-    const tsQuery = toOrTsQuery(query);
+  /**
+   * Postgres full-text search (BM25-like ranking via ts_rank_cd), scoped to the owner.
+   * Searches the same chunk set as vectorSearch, so fusion never mixes a document's
+   * current chunks with ones from an index built by another embedding model.
+   */
+  keywordSearch(params: {
+    userId: string;
+    query: string;
+    embeddingModel: string;
+    limit: number;
+    documentIds?: string[];
+  }): Promise<ChunkRow[]> {
+    const tsQuery = toOrTsQuery(params.query);
     if (!tsQuery) return Promise.resolve([]);
 
     return this.prisma.$queryRaw<ChunkRow[]>(Prisma.sql`
-      SELECT c.id, c."documentId", d.title AS "documentTitle", c.index, c.content, c."tokenCount",
+      SELECT c.id, c."documentId", d.title AS "documentTitle", c.index, c.content, c."tokenCount", c.section,
              ts_rank_cd(to_tsvector('english', c.content), to_tsquery('english', ${tsQuery})) AS score
       FROM "DocumentChunk" c
       JOIN "Document" d ON d.id = c."documentId"
-      WHERE d."userId" = ${userId}
-        AND d.status = 'READY'
+      WHERE d."userId" = ${params.userId}
+        AND c."embeddingModel" = ${params.embeddingModel}
         AND to_tsvector('english', c.content) @@ to_tsquery('english', ${tsQuery})
-        ${this.documentFilter(documentIds)}
+        ${this.documentFilter(params.documentIds)}
       ORDER BY score DESC
-      LIMIT ${limit}
+      LIMIT ${params.limit}
     `);
+  }
+
+  /** Documents whose chunks were embedded by a different model than the configured one (they need re-indexing). */
+  async findStaleEmbeddingDocumentIds(
+    embeddingModel: string,
+  ): Promise<string[]> {
+    const rows = await this.prisma.$queryRaw<Array<{ id: string }>>(Prisma.sql`
+      SELECT DISTINCT c."documentId" AS id
+      FROM "DocumentChunk" c
+      WHERE c."embeddingModel" IS DISTINCT FROM ${embeddingModel}
+    `);
+    return rows.map((row) => row.id);
   }
 
   private documentFilter(documentIds?: string[]): Prisma.Sql {

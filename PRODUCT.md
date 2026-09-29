@@ -8,11 +8,11 @@ web
 
 ## Users
 
-Primary: technical interviewers, hiring managers and recruiters evaluating the author's portfolio for Senior AI / Node.js engineering roles. They open a link on a laptop between meetings or watch a screen-share during an interview, and have two to five minutes to decide whether the author has built real AI infrastructure (RAG, agents, MCP, evals, observability, multi-tenancy).
+Primary: engineers and technical leads evaluating how a production AI platform is built. They open the live demo on a laptop or watch a screen-share, and have two to five minutes to see real AI infrastructure at work (RAG, agents, MCP, evals, observability, multi-tenancy).
 
 Secondary: the author, who uses the app daily to develop, demo and rehearse the architecture walkthrough, and connects MCP clients (Claude Code, Claude Desktop) to it.
 
-Confirmed 2026-09-14: the redesign is aimed at interviewers and recruiters first; the AI machinery must be visible, not hidden.
+Confirmed 2026-09-14: the redesign is aimed at technical evaluators first; the AI machinery must be visible, not hidden.
 
 ## Product Purpose
 
@@ -53,7 +53,7 @@ Every model call is visible, priced and gated. Nothing runs without a trace row;
 
 ## Evidence on Hand
 
-- Real, working features only: the app runs locally against real providers; the eval harness lives in `server/evals` and runs in CI; architecture notes with interview Q&A in `docs/architecture.md`; the full AI-assisted development history in `AI-history/`.
+- Real, working features only: the app runs locally against real providers; the eval harness lives in `server/evals` and runs in CI; architecture notes and trade-offs in `docs/architecture.md`; transcripts of the early AI-assisted sessions in `AI-history/`.
 - No testimonials, customers, pricing plans, benchmarks or uptime claims exist. The landing page must not invent any; it demonstrates the real product surfaces instead.
 - Model prices shown in the UI come from the live catalog.
 

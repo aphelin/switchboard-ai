@@ -94,6 +94,28 @@ describe('PricingService.estimateCost', () => {
     ).toBeCloseTo(0.5 * 1 + 0.5 * 0.1, 8);
   });
 
+  it('prefers the longest matching price key', () => {
+    // The shorter, pricier key is listed first, so a first-match lookup would pick it.
+    const service = makeService(
+      JSON.stringify({
+        'acme-flash': { input: 10, output: 10 },
+        'acme-flash-lite': { input: 1, output: 1 },
+      }),
+    );
+    expect(
+      service.estimateCost('acme/acme-flash-lite-preview-09-2026', undefined, {
+        inputTokens: MILLION,
+        outputTokens: 0,
+      }),
+    ).toBeCloseTo(1, 8);
+    expect(
+      service.estimateCost('acme-flash-2026-01-01', undefined, {
+        inputTokens: MILLION,
+        outputTokens: 0,
+      }),
+    ).toBeCloseTo(10, 8);
+  });
+
   it('lets overrides replace a default price', () => {
     const service = makeService(
       JSON.stringify({ 'gpt-4o-mini': { input: 10, output: 10 } }),

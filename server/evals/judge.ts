@@ -3,7 +3,34 @@ import { scanForInjection } from '../src/shared/ai/injection-scanner';
 import type { EvalKind } from './types';
 
 /** Bump when the rubric changes; stored with every run so scores stay comparable. */
-export const JUDGE_PROMPT_VERSION = '2026-09-13.1';
+export const JUDGE_PROMPT_VERSION = '2026-09-17.1';
+
+/**
+ * The judge is a different model, from a different vendor, than the assistant it
+ * grades: a model grading its own answers tends to prefer them (self-preference
+ * bias). Override with EVAL_JUDGE_MODEL (a model id on the platform provider).
+ */
+export const DEFAULT_JUDGE_MODEL = 'anthropic/claude-sonnet-5';
+
+export interface JudgeModelSettings {
+  model: string;
+  /** Deterministic grading: the same answer should get the same score on a rerun. */
+  temperature: 0;
+}
+
+export function judgeModelSettings(
+  configured: string | undefined,
+  answeringModel: string,
+): JudgeModelSettings {
+  const model = configured?.trim() || DEFAULT_JUDGE_MODEL;
+  const bare = (id: string) => id.slice(id.lastIndexOf('/') + 1).toLowerCase();
+  if (bare(model) === bare(answeringModel)) {
+    throw new Error(
+      `The eval judge (${model}) must be a different model than the one being evaluated (${answeringModel}). Set EVAL_JUDGE_MODEL.`,
+    );
+  }
+  return { model, temperature: 0 };
+}
 
 export const JudgeSchema = z.object({
   correctness: z
@@ -42,13 +69,15 @@ export interface JudgeInput {
   question: string;
   kind: EvalKind;
   expectedKeywords: string[];
-  sources: Array<{ document: string; content: string }>;
+  /** Passages the assistant retrieved, with the ref numbers it cites them by. */
+  sources: Array<{ ref?: number; document: string; content: string }>;
   answer: string;
   notes?: string;
 }
 
-const MAX_SOURCE_CHARS = 1200;
-const MAX_SOURCES = 6;
+/** Enough for every passage an answer can cite (3 searches x 6 passages) at full chunk length. */
+const MAX_SOURCE_CHARS = 2000;
+const MAX_SOURCES = 18;
 
 /**
  * Hosted models sit behind jailbreak filters: quoting an injection payload
@@ -86,7 +115,7 @@ export function buildJudgePrompt(input: JudgeInput): string {
           .slice(0, MAX_SOURCES)
           .map(
             (s, i) =>
-              `[${i + 1}] (${s.document})\n${redactInjectionAttempts(s.content.slice(0, MAX_SOURCE_CHARS))}`,
+              `[${s.ref ?? i + 1}] (${s.document})\n${redactInjectionAttempts(s.content.slice(0, MAX_SOURCE_CHARS))}`,
           )
           .join('\n\n')
       : '(the assistant retrieved no passages)';
