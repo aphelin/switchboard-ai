@@ -1,4 +1,10 @@
-import type { CaseResult, EvalReport, MetricCheck } from './types';
+import type { AggregateRetrieval } from './metrics';
+import type {
+  CaseResult,
+  EvalReport,
+  MetricCheck,
+  RetrievalMode,
+} from './types';
 
 const pad = (
   value: string | number | null | undefined,
@@ -21,7 +27,8 @@ export function formatCaseTable(
     pad('case', 30),
     pad('kind', 12),
     pad('rank', 4, 'right'),
-    pad('hit', 3),
+    pad('recall', 6, 'right'),
+    pad('nDCG', 4, 'right'),
     ...(retrievalOnly
       ? []
       : [
@@ -39,8 +46,21 @@ export function formatCaseTable(
     const cells = [
       pad(result.case.id, 30),
       pad(result.case.kind, 12),
-      pad(result.retrieval.rank, 4, 'right'),
-      pad(result.retrieval.hit ? 'yes' : 'NO', 3),
+      pad(
+        result.retrieval.scored ? (result.retrieval.rank ?? 'miss') : 'n/a',
+        4,
+        'right',
+      ),
+      pad(
+        result.retrieval.scored ? fmt(result.retrieval.recallAtK) : '-',
+        6,
+        'right',
+      ),
+      pad(
+        result.retrieval.scored ? fmt(result.retrieval.ndcgAtK) : '-',
+        4,
+        'right',
+      ),
     ];
     if (!retrievalOnly) {
       const kw =
@@ -67,6 +87,23 @@ export function formatCaseTable(
   return [header, '-'.repeat(header.length), ...rows].join('\n');
 }
 
+/** The three retrievers on the same cases: shows what hybrid fusion buys. */
+export function formatModeComparison(
+  byMode: Record<RetrievalMode, AggregateRetrieval>,
+): string {
+  const header = `${pad('mode', 8)}  ${pad('recall@k', 8, 'right')}  ${pad('MRR', 5, 'right')}  ${pad('nDCG@k', 6, 'right')}  ${pad('hit rate', 8, 'right')}`;
+  const rows = (Object.keys(byMode) as RetrievalMode[]).map((mode) => {
+    const m = byMode[mode];
+    return `${pad(mode, 8)}  ${pad(fmt(m.recallAtK), 8, 'right')}  ${pad(fmt(m.mrr), 5, 'right')}  ${pad(fmt(m.ndcgAtK), 6, 'right')}  ${pad(fmt(m.hitRate), 8, 'right')}`;
+  });
+  const cases = Object.values(byMode)[0]?.cases ?? 0;
+  return [
+    `Retrieval by mode (${cases} answerable cases)`,
+    header,
+    ...rows,
+  ].join('\n');
+}
+
 export function formatMetrics(metrics: MetricCheck[]): string {
   return metrics
     .map((m) => {
@@ -84,7 +121,7 @@ export function formatSummary(report: EvalReport): string {
     .join(', ');
   return [
     `Run ${report.runId}  model=${report.model}  embeddings=${report.embeddingModel}`,
-    `prompt=${report.promptVersion}  judge=${report.judgeVersion}  mode=${report.retrievalOnly ? 'retrieval-only' : 'full'}`,
+    `prompt=${report.promptVersion}  judge=${report.judgeVersion}${report.judgeModel ? ` (${report.judgeModel})` : ''}  mode=${report.retrievalOnly ? 'retrieval-only' : 'full'}`,
     `LLM usage: ${usage.calls} calls (${byName}), ${usage.inputTokens} in / ${usage.outputTokens} out tokens, ~$${usage.costUsd.toFixed(4)}${usage.costComplete ? '' : ' (incomplete: some calls had no price data)'}`,
     `Result: ${report.passed ? 'PASSED' : 'FAILED'}`,
   ].join('\n');

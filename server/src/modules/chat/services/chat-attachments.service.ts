@@ -6,6 +6,7 @@ import type { UIMessage } from 'ai';
 import { StorageService } from '../../../shared/storage/storage.service';
 import { CHAT } from '../../../shared/constants/app.constants';
 import type { AppConfiguration } from '../../../config/configuration.interface';
+import { CONVERSATION_ID } from '../dto/chat-request.dto';
 
 type Part = UIMessage['parts'][number];
 type FilePart = Extract<Part, { type: 'file' }>;
@@ -121,7 +122,8 @@ export class ChatAttachmentsService {
     conversationId: string,
     fileId: string,
   ): Promise<{ key: string; data: Buffer; contentType: string } | null> {
-    if (!FILE_ID.test(fileId)) return null;
+    if (!CONVERSATION_ID.test(conversationId) || !FILE_ID.test(fileId))
+      return null;
     const key = this.keyFor(conversationId, fileId);
     const data = await this.storage.get(key).catch(() => null);
     if (!data) return null;
@@ -133,7 +135,8 @@ export class ChatAttachmentsService {
     conversationId: string,
     fileId: string,
   ): Promise<{ stream: ReadStream; contentType: string; size: number } | null> {
-    if (!FILE_ID.test(fileId)) return null;
+    if (!CONVERSATION_ID.test(conversationId) || !FILE_ID.test(fileId))
+      return null;
     const key = this.keyFor(conversationId, fileId);
     const object = await this.storage.head(key);
     if (!object) return null;
@@ -144,7 +147,15 @@ export class ChatAttachmentsService {
     };
   }
 
+  /**
+   * Both parts are validated here as well as at the edge: a key built from an id
+   * like "../images" would still pass the storage root check but reach another
+   * folder, so a malformed id never becomes a key.
+   */
   private keyFor(conversationId: string, fileId: string): string {
+    if (!CONVERSATION_ID.test(conversationId) || !FILE_ID.test(fileId)) {
+      throw new BadRequestException('Invalid attachment reference');
+    }
     return `attachments/${conversationId}/${fileId}`;
   }
 }

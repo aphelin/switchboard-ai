@@ -137,6 +137,26 @@ export class GenerationRepository {
     await this.prisma.generation.delete({ where: { id } });
   }
 
+  /** Other generations pointing at the same stored file (demo guests share the template's images). */
+  countOthersUsingStorageKey(storageKey: string, id: string): Promise<number> {
+    return this.prisma.generation.count({
+      where: {
+        id: { not: id },
+        parameters: { path: ['storageKey'], equals: storageKey },
+      },
+    });
+  }
+
+  /** The user's jobs that are queued or running. */
+  countInFlight(userId: string): Promise<number> {
+    return this.prisma.generation.count({
+      where: {
+        userId,
+        status: { in: [JobStatus.PENDING, JobStatus.GENERATING] },
+      },
+    });
+  }
+
   async updateJobId(id: string, jobId: string): Promise<Generation> {
     return this.prisma.generation.update({
       where: { id },

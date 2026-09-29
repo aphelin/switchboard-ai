@@ -45,6 +45,7 @@ export class ImageParametersDto {
 
   @IsOptional()
   @IsString()
+  @MaxLength(1000)
   negativePrompt?: string;
 
   /**
@@ -67,6 +68,7 @@ export class TextParametersDto {
 
   @IsOptional()
   @IsString()
+  @MaxLength(4000)
   systemPrompt?: string;
 }
 
@@ -97,8 +99,14 @@ export class CreateGenerationDto {
   @MaxLength(120)
   llmModel?: string;
 
+  /** Validated against the parameter set of `type`: image options for IMAGE, text options for TEXT. */
   @IsOptional()
   @ValidateNested()
-  @Type(() => ImageParametersDto)
+  @Type((options) =>
+    (options?.object as { type?: GenerationType } | undefined)?.type ===
+    GenerationType.TEXT
+      ? TextParametersDto
+      : ImageParametersDto,
+  )
   parameters?: ImageParametersDto | TextParametersDto;
 }

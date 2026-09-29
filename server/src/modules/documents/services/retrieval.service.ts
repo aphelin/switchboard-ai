@@ -14,7 +14,8 @@ import type {
  * Hybrid retrieval: semantic (pgvector) and lexical (Postgres full-text) search
  * run in parallel and are merged with Reciprocal Rank Fusion. Vectors catch
  * paraphrases ("staff" vs "employees"); keywords catch exact identifiers, names
- * and codes that embeddings blur. Together they beat either one alone.
+ * and codes that embeddings blur. The eval harness reports all three modes side
+ * by side (server/evals), so that claim is measured rather than assumed.
  * Both retrievers only see the requesting user's documents.
  */
 @Injectable()
@@ -33,14 +34,24 @@ export class RetrievalService {
     const [vectorHits, keywordHits] = await Promise.all([
       mode === 'keyword'
         ? Promise.resolve<ChunkRow[]>([])
-        : this.embedding
-            .embedQuery(query, { traceId, userId })
-            .then((vector) =>
-              this.repository.vectorSearch(userId, vector, pool, documentIds),
-            ),
+        : this.embedding.embedQuery(query, { traceId, userId }).then((vector) =>
+            this.repository.vectorSearch({
+              userId,
+              embedding: vector,
+              embeddingModel: this.embedding.modelName,
+              limit: pool,
+              documentIds,
+            }),
+          ),
       mode === 'vector'
         ? Promise.resolve<ChunkRow[]>([])
-        : this.repository.keywordSearch(userId, query, pool, documentIds),
+        : this.repository.keywordSearch({
+            userId,
+            query,
+            embeddingModel: this.embedding.modelName,
+            limit: pool,
+            documentIds,
+          }),
     ]);
 
     const fused = reciprocalRankFusion(
@@ -63,6 +74,7 @@ export class RetrievalService {
         documentId: item.documentId,
         documentTitle: item.documentTitle,
         chunkIndex: item.index,
+        section: item.section,
         content: item.content,
         score,
         vectorScore: vectorScores.get(item.id),

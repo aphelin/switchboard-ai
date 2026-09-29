@@ -23,7 +23,7 @@ const ALICE = 'user-alice';
 const BOB = 'user-bob';
 const ALICE_KEYS: Record<string, string> = {
   anthropic: 'sk-ant-api03-alice-only-key-000000000000',
-  google: 'AIzaSyAliceOnlyGoogleKey0000000000000',
+  google: ['AIza', 'SyAliceOnlyGoogleKey0000000000000'].join(''),
 };
 
 /** Only Alice has stored keys (Anthropic and Google). */

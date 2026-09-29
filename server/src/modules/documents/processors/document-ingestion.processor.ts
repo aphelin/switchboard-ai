@@ -7,7 +7,10 @@ import { EmbeddingService } from '../../llm/services/embedding.service';
 import { SseService } from '../../sse/services/sse.service';
 import { DOCUMENT_INGESTION_QUEUE } from '../../../shared/constants/app.constants';
 import { DocumentStatus } from 'generated/prisma/enums';
-import type { DocumentIngestionJobData } from '../types/documents.types';
+import type {
+  DocumentIngestionJobData,
+  TextChunk,
+} from '../types/documents.types';
 
 interface DocumentRef {
   id: string;
@@ -15,9 +18,21 @@ interface DocumentRef {
 }
 
 /**
+ * The text that is embedded for a chunk. "Contextual" embedding: the document
+ * title and heading path give short or generic passages ("Restart it with the
+ * command below") a hint of what they are about. The stored chunk stays clean.
+ */
+export const embeddingTextFor = (title: string, chunk: TextChunk): string =>
+  [title, chunk.section, '', chunk.content]
+    .filter((line) => line !== null)
+    .join('\n');
+
+/**
  * Ingestion pipeline: document -> chunks -> embeddings -> pgvector.
  * Runs as a queue job so uploads return immediately and embedding load never
  * blocks the API; progress is pushed to the owner's UI over SSE.
+ * A failed attempt is retried with backoff (a hosted embedding API can have a
+ * bad minute); the document is only marked FAILED after the last attempt.
  */
 @Processor(DOCUMENT_INGESTION_QUEUE, { concurrency: 1 })
 export class DocumentIngestionProcessor extends WorkerHost {
@@ -40,25 +55,28 @@ export class DocumentIngestionProcessor extends WorkerHost {
       return;
     }
 
-    this.logger.log(`Ingesting document ${documentId} ("${document.title}")`);
+    this.logger.log(
+      `Ingesting document ${documentId} ("${document.title}"), attempt ${job.attemptsMade + 1}`,
+    );
     await this.setStatus(document, DocumentStatus.PROCESSING);
 
     try {
-      const chunks = await this.chunking.chunk(document.content);
+      const chunks = await this.chunking.chunk(document.content, {
+        countTokens: (text) => this.embedding.countTokens(text),
+      });
       if (chunks.length === 0) {
         throw new Error('Document has no extractable text');
       }
 
-      // "Contextual" embedding: prefixing the title gives each chunk a hint of
-      // what document it belongs to, which helps short or generic passages.
       const embeddings = await this.embedding.embedDocuments(
-        chunks.map((chunk) => `${document.title}\n\n${chunk.content}`),
+        chunks.map((chunk) => embeddingTextFor(document.title, chunk)),
         { traceId: documentId, userId: document.userId ?? undefined },
       );
 
       await this.repository.replaceChunks(
         documentId,
         chunks.map((chunk, i) => ({ ...chunk, embedding: embeddings[i] })),
+        this.embedding.modelName,
       );
 
       await this.setStatus(document, DocumentStatus.READY, {
@@ -68,12 +86,17 @@ export class DocumentIngestionProcessor extends WorkerHost {
       this.logger.log(`Document ${documentId} ready (${chunks.length} chunks)`);
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Unknown error';
+      const attempts = job.opts.attempts ?? 1;
+      const finalAttempt = job.attemptsMade + 1 >= attempts;
       this.logger.error(
-        `Ingestion failed for document ${documentId}: ${message}`,
+        `Ingestion attempt ${job.attemptsMade + 1}/${attempts} failed for document ${documentId}: ${message}`,
       );
-      await this.setStatus(document, DocumentStatus.FAILED, {
-        error: message,
-      });
+      // Earlier attempts leave the document PENDING (it will be retried); the last one marks it FAILED.
+      await this.setStatus(
+        document,
+        finalAttempt ? DocumentStatus.FAILED : DocumentStatus.PENDING,
+        { error: message },
+      );
       throw error;
     }
   }

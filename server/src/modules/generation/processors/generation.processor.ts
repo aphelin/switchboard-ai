@@ -12,6 +12,7 @@ import { LlmService } from '../../llm/services/llm.service';
 import { PromptEnhancerService } from '../../llm/services/prompt-enhancer.service';
 import { ModelRouterService } from '../../providers/services/model-router.service';
 import { StorageService } from '../../../shared/storage/storage.service';
+import { BudgetService } from '../../auth/services/budget.service';
 import { GENERATION_QUEUE } from '../../../shared/constants/app.constants';
 import { GenerationType, JobStatus } from 'generated/prisma/enums';
 import type { AppConfiguration } from '../../../config/configuration.interface';
@@ -48,6 +49,7 @@ export class GenerationProcessor extends WorkerHost {
     private readonly modelRouter: ModelRouterService,
     private readonly promptEnhancer: PromptEnhancerService,
     private readonly storage: StorageService,
+    private readonly budget: BudgetService,
     configService: ConfigService<AppConfiguration, true>,
   ) {
     super();
@@ -130,6 +132,7 @@ export class GenerationProcessor extends WorkerHost {
       context.userId,
       context.llmModel,
     );
+    await this.assertBudget(context, route.source);
     const enhanced = await this.promptEnhancer.enhance(
       prompt,
       { traceId: context.generationId, userId: context.userId },
@@ -166,6 +169,7 @@ export class GenerationProcessor extends WorkerHost {
       imageParams.model,
       { edit: !!source },
     );
+    await this.assertBudget(context, route.source);
 
     const result = await this.imageGeneration.generate({
       route,
@@ -243,6 +247,7 @@ export class GenerationProcessor extends WorkerHost {
       context.userId,
       context.llmModel,
     );
+    await this.assertBudget(context, route.source);
 
     const result = await this.llmService.generateText({
       name: 'generation.text',
@@ -278,6 +283,19 @@ export class GenerationProcessor extends WorkerHost {
       textResult: result.text,
       enhancedPrompt: resolved.enhancedPrompt,
     });
+  }
+
+  /**
+   * Checked again right before the paid call: the check at queue time can't see
+   * the cost of jobs that were queued alongside this one and finished first.
+   */
+  private async assertBudget(
+    context: JobContext,
+    source: 'platform' | 'user',
+  ): Promise<void> {
+    if (source === 'platform') {
+      await this.budget.assertWithinBudget(context.userId);
+    }
   }
 
   private async handleFailure(

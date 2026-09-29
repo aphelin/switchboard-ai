@@ -23,6 +23,12 @@ export const DEMO = {
 } as const;
 
 export const JOB_ATTEMPTS = 3;
+/**
+ * Queued or running generations one user may have at a time. The budget is
+ * checked before a job is queued, and spend is only known when a job finishes,
+ * so this bounds how far a burst of parallel requests can overshoot it.
+ */
+export const MAX_IN_FLIGHT_GENERATIONS = 5;
 export const JOB_BACKOFF_DELAY = 5000;
 
 export const CIRCUIT_BREAKER_OPTIONS = {
@@ -37,6 +43,16 @@ export const THROTTLE_CONFIGS = [
   { name: 'medium', ttl: 60000, limit: 30 },
   { name: 'long', ttl: 3600000, limit: 100 },
 ] as const;
+
+/**
+ * MCP clients burst several requests when they connect, so the MCP route gets
+ * its own, higher limits instead of none: every tool call still counts per user.
+ */
+export const MCP_THROTTLE = {
+  short: { ttl: 1000, limit: 20 },
+  medium: { ttl: 60000, limit: 240 },
+  long: { ttl: 3600000, limit: 2000 },
+} as const;
 
 export const SSE_EVENTS = {
   STATUS_UPDATE: 'status-update',
@@ -61,6 +77,8 @@ export const IMAGE_GENERATION_TIMEOUT_MS = 120000;
 export const TEXT_GENERATION_TIMEOUT_MS = 120000;
 export const TRANSCRIPTION_TIMEOUT_MS = 60000;
 export const LLM_CALL_TIMEOUT_MS = 120000;
+/** Output cap per model call in a stream (chat) unless the caller sets one; leaves room for reasoning tokens. */
+export const STREAM_MAX_OUTPUT_TOKENS = 8192;
 
 export const BULLMQ_PRIORITY = {
   HIGH: 1,
@@ -78,9 +96,13 @@ export const EMBEDDING_DIMENSIONS = 384;
 export const EMBEDDING_BATCH_SIZE = 32;
 
 export const RAG = {
-  /** Characters per chunk. ~200 tokens: small enough to be precise, large enough to keep context. */
-  CHUNK_SIZE: 800,
-  CHUNK_OVERLAP: 120,
+  /**
+   * Tokens per chunk (embedding tokenizer). ~200 tokens is small enough to be precise
+   * and large enough to keep context, and with the title and heading path prepended it
+   * stays well inside bge-small's 512-token window.
+   */
+  CHUNK_TOKENS: 200,
+  CHUNK_OVERLAP_TOKENS: 30,
   /** Passages returned to the model per search. */
   TOP_K: 6,
   /** Candidates fetched from each retriever before fusion. */

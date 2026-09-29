@@ -5,6 +5,7 @@
 Acme Cloud is a fictional infrastructure provider founded in 2019 in Tallinn, Estonia. The company runs two data centres: **Frankfurt (FRA-1)** and **Oslo (OSL-2)**. A third region in Montreal is planned for Q2 2027 but is not yet available.
 
 The leadership team:
+
 - CEO: Priya Raghunathan
 - CTO: Dana Vartanian
 - Head of Support: Tomasz Zieliński
@@ -17,11 +18,11 @@ The leadership team:
 
 ## Plans and pricing
 
-| Plan | Monthly price | Support SLA | Included Vault storage |
-|------|---------------|-------------|------------------------|
-| Starter | €29 | Best effort (community forum) | 1 TB |
-| Standard | €249 | 1 business day | 20 TB |
-| Enterprise | Custom | 4 hours, 24/7 | Unlimited |
+| Plan       | Monthly price | Support SLA                   | Included Vault storage |
+| ---------- | ------------- | ----------------------------- | ---------------------- |
+| Starter    | €29           | Best effort (community forum) | 1 TB                   |
+| Standard   | €249          | 1 business day                | 20 TB                  |
+| Enterprise | Custom        | 4 hours, 24/7                 | Unlimited              |
 
 Enterprise customers get a named technical account manager and a dedicated Slack Connect channel. All plans include egress of 5 TB per month; additional egress costs €0.02 per GB.
 

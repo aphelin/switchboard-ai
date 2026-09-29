@@ -2,7 +2,7 @@
 
 A fullstack AI application: image and text generation with async job processing, a **RAG knowledge base** over your own documents (pgvector, hybrid search), a **streaming tool-using chat agent** with human approval for side effects, an **MCP server** that exposes the same capabilities to external agents, **LLM observability** (tokens, cost, latency per call) and an **evaluation harness** that runs in CI. Everything is **per user**: email + password accounts, API keys for MCP clients, and a daily AI spending limit.
 
-Design notes and interview-oriented explanations live in [`docs/architecture.md`](./docs/architecture.md); the plan and cost notes in [`docs/ai-engineering-roadmap.md`](./docs/ai-engineering-roadmap.md).
+Design notes and trade-offs live in [`docs/architecture.md`](./docs/architecture.md); the original plan and cost notes in [`docs/ai-engineering-roadmap.md`](./docs/ai-engineering-roadmap.md).
 
 ![Switchboard AI landing page](./docs/screenshots/landing.jpg)
 
@@ -15,7 +15,7 @@ Design notes and interview-oriented explanations live in [`docs/architecture.md`
 ---
 
 > **AI Development Session Logs**
-> The full AI-assisted development chat history for this project is available in the [`AI-history/`](./AI-history) directory. Each file is a readable transcript of a Cursor AI session, covering architecture decisions, implementation details, and debugging.
+> Transcripts of the early Cursor AI sessions from the original prototype (then called Mini AI Toolkit) are in [`AI-history/`](./AI-history), unedited. They cover the first architecture decisions, implementation and debugging; later work is not included.
 
 ---
 
@@ -55,7 +55,7 @@ Design notes and interview-oriented explanations live in [`docs/architecture.md`
 
 **Generation flow:** submit prompt → `Generation` row (PENDING) → BullMQ job → worker calls the provider through a circuit breaker → image bytes stored locally and served by the API (`/api/generations/:id/image`) → DB updated → SSE event → UI updates.
 
-**RAG flow:** upload document → `Document` row → ingestion job: chunk (LangChain splitter) → embed (local model) → pgvector → READY. Search = vector similarity + Postgres full-text, fused with Reciprocal Rank Fusion; every passage is scanned for prompt-injection patterns.
+**RAG flow:** upload document → `Document` row → ingestion job (retried with backoff): chunk by markdown section and token count → embed with title and heading path (local model) → pgvector → READY. Search = vector similarity + Postgres full-text, fused with Reciprocal Rank Fusion; every passage is scanned for prompt-injection patterns.
 
 **Agent flow:** `POST /api/chat` → AI SDK `streamText` loop (max 6 steps) with tools `search_documents`, `list_documents`, `list_generations`, `get_generation`, `generate_image` and `edit_image` (both require user approval) → UI message stream to the browser → messages persisted, conversation titled by the fast model. Messages can carry up to three images (shrunk in the browser, stored by the API and inlined for the model; vision-capable models only), and `POST /api/chat/transcribe` turns a microphone recording into text through Pollinations speech-to-text, priced per second in the ledger.
 
@@ -94,7 +94,8 @@ The original project deliberately avoided provider abstractions (KISS/YAGNI). Mu
 ### Knowledge base (RAG)
 
 - Upload `.txt` / `.md` / `.pdf` or paste text; async ingestion with live status
-- Chunking with overlap, title-prefixed ("contextual") embeddings, pgvector HNSW index
+- Markdown-aware chunking sized by the embedding model's tokenizer, with overlap; title- and heading-prefixed ("contextual") embeddings; citations show the section
+- pgvector HNSW index with iterative scans, so tenant filtering never shrinks a small user's results; chunks record their embedding model and are re-indexed when it changes
 - **Hybrid search** (vector + keyword, RRF) with `hybrid` / `vector` / `keyword` modes and a retrieval test panel that shows scores and fusion ranks
 - Prompt-injection scanner flags suspicious passages
 - Re-index and delete; scoped search by document ids
@@ -124,7 +125,7 @@ The original project deliberately avoided provider abstractions (KISS/YAGNI). Mu
 ### Observability and evaluation
 
 - `LlmCall` trace per model call: name, trace id, provider, model, tokens, cached tokens, estimated cost (Pollinations prices loaded at startup), latency, status; `/traces` page with summaries by model and by feature
-- Eval harness (`server/evals`): every CI push runs retrieval hit@k and MRR (free, deterministic). LLM-as-judge correctness/faithfulness, abstention and a prompt-injection test run when `POLLINATIONS_API_KEY` is set. Thresholds fail the job
+- Eval harness (`server/evals`): 59 cases over 8 fictional documents, including look-alike distractors. Every CI push scores retrieval against labelled gold passages (recall@5, MRR, nDCG@5) for vector, keyword and hybrid search side by side (free, deterministic). With `POLLINATIONS_API_KEY` set, answers are also graded by an LLM judge on a different model (correctness, faithfulness, abstention, prompt injection). Thresholds fail the job
 - Vitest unit tests for the pure logic (RRF, chunking, injection scanner, pricing, history trimming, key encryption and redaction, model routing) and for `LlmService` with mock models
 
 ### Accounts and access
@@ -146,7 +147,7 @@ The original project deliberately avoided provider abstractions (KISS/YAGNI). Mu
 ### Platform
 
 - Circuit breakers around every upstream (4xx never trips them), optional LLM fallback provider
-- Multi-tier rate limiting (Redis-backed; SSE, image and MCP routes exempt)
+- Multi-tier per-user rate limiting (Redis-backed; SSE and image routes exempt, MCP with higher limits)
 - Structured logging (Pino), Docker Compose for dev and prod, GitHub Actions CI (lint, typecheck, tests, evals, Docker build)
 
 ## Setup Instructions
@@ -196,6 +197,8 @@ Starts PostgreSQL (pgvector image), Redis, the NestJS server (hot reload) and th
 ### Option 2: Docker — Production
 
 ```bash
+# Inlined into the browser bundle at build time, so they are build arguments
+export NEXT_PUBLIC_API_URL=https://api.example.com/api NEXT_PUBLIC_APP_URL=https://example.com
 docker compose -f docker-compose.prod.yml up --build
 ```
 
@@ -237,6 +240,7 @@ npm run test:auth          # two-user isolation test against a running API (dev/
 npm run test:providers     # bring-your-own-key isolation test (no provider account needed;
                            # E2E_ANTHROPIC_API_KEY=sk-ant-... adds one real chat turn)
 npm run test:demo          # guest session limits and isolation against a running API (no LLM calls)
+npm run test:retrieval-scope   # vector search tenant filtering on a real pgvector database (dev/test DB only)
 ```
 
 ### Filling the demo
@@ -294,9 +298,10 @@ npx @modelcontextprotocol/inspector --cli http://localhost:4000/api/mcp --method
 | `LLM_PRICING_JSON` | Pricing override, USD per 1M tokens | none |
 | `LLM_FALLBACK_PROVIDER` / `_BASE_URL` / `_API_KEY` / `_MODEL` | Optional second provider used on outages | none |
 | `EMBEDDING_PROVIDER` | `local` (in-process) \| `openai-compatible` | `local` |
-| `EMBEDDING_MODEL` | Embedding model (must output 384 dimensions) | `Xenova/bge-small-en-v1.5` |
+| `EMBEDDING_MODEL` | Embedding model (must output 384 dimensions; changing it re-indexes documents on the next start) | `Xenova/bge-small-en-v1.5` |
 | `EMBEDDING_BASE_URL` / `EMBEDDING_API_KEY` | Hosted embedding API (when not local) | none |
 | `TRANSFORMERS_CACHE_DIR` | Where the local model is cached | `./.cache/transformers` |
+| `EVAL_JUDGE_MODEL` | Model that grades eval answers; must differ from the model being evaluated | `anthropic/claude-sonnet-5` |
 | `NODE_ENV` | `development` / `production` | `development` |
 | `NEXT_PUBLIC_API_URL` | Backend API URL (client) | `http://localhost:4000/api` |
 | `NEXT_PUBLIC_APP_URL` | Public app URL (client, SEO) | `http://localhost:3000` |

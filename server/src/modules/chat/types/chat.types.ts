@@ -22,6 +22,8 @@ export interface SourcePassage {
   documentId: string;
   document: string;
   chunkIndex: number;
+  /** Heading path inside the document, when it has one. */
+  section?: string;
   untrusted: boolean;
   content: string;
 }

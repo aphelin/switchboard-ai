@@ -1,22 +1,76 @@
 import { Injectable } from '@nestjs/common';
 import { RecursiveCharacterTextSplitter } from '@langchain/textsplitters';
 import { RAG } from '../../../shared/constants/app.constants';
+import { estimateTokens } from '../../../shared/ai/estimate-tokens';
 import type { TextChunk } from '../types/documents.types';
 
+export { estimateTokens };
+
+/** Counts tokens the way the embedding model will see them. */
+export type TokenCounter = (text: string) => number | Promise<number>;
+
 export interface ChunkingOptions {
+  /** Maximum chunk size in tokens (as measured by `countTokens`). */
   chunkSize?: number;
   chunkOverlap?: number;
+  /** Defaults to the ~4 characters per token estimate; ingestion passes the embedding model's tokenizer. */
+  countTokens?: TokenCounter;
 }
 
-/** Rough token estimate (≈4 characters per token for English). */
-export const estimateTokens = (text: string): number =>
-  Math.ceil(text.length / 4);
+interface Section {
+  /** "Setup > API keys", or null for text before the first heading / plain text. */
+  path: string | null;
+  text: string;
+}
+
+const HEADING = /^(#{1,6})\s+(.+?)\s*#*\s*$/;
+const FENCE = /^\s*(```|~~~)/;
 
 /**
- * Splits text into overlapping chunks along natural boundaries (paragraphs,
- * then lines, then sentences) so that a chunk rarely cuts an idea in half.
- * Chunk size is the main retrieval tuning knob: small chunks are precise but
- * lose context, large chunks dilute the embedding.
+ * Splits markdown into sections at ATX headings, tracking the heading path.
+ * Lines inside fenced code blocks are never read as headings ("# comment").
+ * A heading with no text under it only contributes to its children's path.
+ */
+export function splitMarkdownSections(text: string): Section[] {
+  const sections: Section[] = [];
+  const stack: string[] = [];
+  let path: string | null = null;
+  let lines: string[] = [];
+  let hasBody = false;
+  let inFence = false;
+
+  const flush = () => {
+    if (hasBody) sections.push({ path, text: lines.join('\n').trim() });
+    lines = [];
+    hasBody = false;
+  };
+
+  for (const line of text.split('\n')) {
+    if (FENCE.test(line)) inFence = !inFence;
+    const heading = inFence ? null : HEADING.exec(line);
+    if (heading) {
+      flush();
+      const level = heading[1].length;
+      stack.length = level - 1;
+      stack[level - 1] = heading[2];
+      path = stack.filter(Boolean).join(' > ');
+      lines.push(line);
+      continue;
+    }
+    lines.push(line);
+    if (line.trim()) hasBody = true;
+  }
+  flush();
+  return sections;
+}
+
+/**
+ * Structure-aware chunking. Markdown is first split at headings, so a chunk
+ * never spans two sections and carries its heading path (used in the embedding
+ * text and in citations). Each section is then split along natural boundaries
+ * (paragraphs, lines, sentences) with overlap, sized in tokens rather than
+ * characters: the embedding model truncates by tokens, and token density varies
+ * a lot between prose, code and identifiers.
  */
 @Injectable()
 export class ChunkingService {
@@ -24,21 +78,27 @@ export class ChunkingService {
     text: string,
     options: ChunkingOptions = {},
   ): Promise<TextChunk[]> {
+    const countTokens = options.countTokens ?? estimateTokens;
     const splitter = new RecursiveCharacterTextSplitter({
-      chunkSize: options.chunkSize ?? RAG.CHUNK_SIZE,
-      chunkOverlap: options.chunkOverlap ?? RAG.CHUNK_OVERLAP,
+      chunkSize: options.chunkSize ?? RAG.CHUNK_TOKENS,
+      chunkOverlap: options.chunkOverlap ?? RAG.CHUNK_OVERLAP_TOKENS,
+      lengthFunction: async (piece) => countTokens(piece),
       separators: ['\n\n', '\n', '. ', '? ', '! ', ' ', ''],
     });
 
-    const pieces = await splitter.splitText(text);
-
-    return pieces
-      .map((content) => content.trim())
-      .filter((content) => content.length > 0)
-      .map((content, index) => ({
-        index,
-        content,
-        tokenCount: estimateTokens(content),
-      }));
+    const chunks: TextChunk[] = [];
+    for (const section of splitMarkdownSections(text)) {
+      for (const piece of await splitter.splitText(section.text)) {
+        const content = piece.trim();
+        if (!content) continue;
+        chunks.push({
+          index: chunks.length,
+          content,
+          tokenCount: await countTokens(content),
+          section: section.path,
+        });
+      }
+    }
+    return chunks;
   }
 }

@@ -1,6 +1,6 @@
 # Architecture and Design Notes
 
-This document explains how the AI features of Switchboard AI work, why they are built the way they are, and what the trade-offs are. It is written to be read before an interview: every section ends with the questions you should be able to answer about it.
+This document explains how the AI features of Switchboard AI work, why they are built the way they are, and what the trade-offs are. Every section ends with the questions the design has to answer, so the trade-offs are explicit.
 
 Companion documents: [`ai-engineering-roadmap.md`](./ai-engineering-roadmap.md) (why these features, cost notes, landscape) and the main [README](../README.md) (setup and API reference).
 
@@ -63,7 +63,7 @@ Shared building blocks (`server/src/shared`): circuit breaker, local object stor
 
 Two details matter for quality: BGE models expect a query instruction prefix on the *query* side only, and use CLS pooling (MiniLM-style models use mean pooling). The service handles both.
 
-### Questions to be ready for
+### Questions this design has to answer
 
 - Why an OpenAI-compatible abstraction instead of the provider SDKs directly? (One code path, provider is config; cost: provider-specific features such as Anthropic prompt caching need per-provider options.)
 - What happens when the provider returns 401 vs 500 vs a timeout? (401: surfaced as an upstream error, breaker untouched; 500/timeout: counted, breaker may open, fallback provider tried.)
@@ -79,17 +79,19 @@ Two details matter for quality: BGE models expect a query instruction prefix on 
 
 `POST /api/documents` (JSON) or `POST /api/documents/upload` (multipart: .txt, .md, .pdf) creates a `Document` row with status `PENDING` and enqueues a BullMQ job. The worker:
 
-1. Splits the text with LangChain's `RecursiveCharacterTextSplitter` (800 characters, 120 overlap, paragraph → line → sentence boundaries). Chunk size is the main tuning knob: small chunks are precise but lose context; large chunks dilute the embedding.
-2. Embeds each chunk **prefixed with the document title** ("contextual" embedding: short or generic passages get a hint of what they belong to).
-3. Replaces the document's chunks atomically in one transaction (re-indexing never leaves a half-indexed document) and marks the document `READY`.
+1. **Splits markdown at headings** first, tracking the heading path ("Alerts > VaultGatewayHighLatency"; `#` lines inside code fences are ignored), so a chunk never spans two sections. Each section is then split with LangChain's `RecursiveCharacterTextSplitter` along paragraph → line → sentence boundaries, **sized in tokens by the embedding model's own tokenizer** (200 tokens, 30 overlap). Characters are a poor proxy: token density differs a lot between prose, identifiers and code, and the model truncates by tokens (bge-small reads 512).
+2. Embeds each chunk **prefixed with the document title and heading path** ("contextual" embedding: short or generic passages get a hint of what they belong to). The stored chunk stays clean; its `section` is returned with search results and shown in citations.
+3. Replaces the document's chunks atomically in one transaction, together with the name of the embedding model that produced them, and marks the document `READY`. Until the swap, the previous chunks stay searchable, so re-indexing never makes a document disappear.
 
-Status changes are pushed to the UI over `GET /api/documents/sse`.
+The job has a stable id per document (`ingest-<id>`: a double click on "reindex" queues it once) and 3 attempts with exponential backoff, because a hosted embedding API can have a bad minute; the document only becomes `FAILED` after the last attempt. Status changes are pushed to the UI over `GET /api/documents/sse`.
+
+**Embedding model changes.** Vectors from two models live in different spaces, even at the same dimension, so comparing them silently returns nonsense. Every chunk records `embeddingModel`, both retrievers only read chunks from the configured model, and on startup any document indexed by another model is queued for re-indexing. Query and passage prefixes are part of a per-family profile (`llm/catalog/embedding-profiles.ts`): BGE instructs the query side only, E5 and Nomic prefix both sides.
 
 ### Retrieval
 
 `RetrievalService.search` runs two retrievers **in parallel** and merges them:
 
-- **Vector search**: pgvector cosine similarity (`<=>`) with an HNSW index. Catches paraphrases ("staff" vs "employees").
+- **Vector search**: pgvector cosine similarity (`<=>`) with an HNSW index. Catches paraphrases ("staff" vs "employees"). The query runs with `hnsw.iterative_scan = strict_order` (pgvector 0.8): a plain HNSW scan returns about `ef_search` (40) nearest chunks across **all** users and only then applies the owner filter, so a user with a few documents next to a large tenant gets fewer results than asked for, or none. `npm run test:retrieval-scope` reproduces that on a real database (0 of 6 results with a plain scan) and checks the fix returns a full top-k.
 - **Keyword search**: Postgres full-text search (`to_tsvector` / `ts_rank_cd`, GIN index). Terms are OR-ed so a passage matching some of the words still ranks. Catches exact identifiers, commands and names that embeddings blur (`vaultctl freeze`).
 - **Reciprocal Rank Fusion** (`shared/ai/rrf.ts`): `score = Σ 1/(k + rank)` over both lists, `k = 60`. It needs no score normalisation and boosts passages found by both retrievers.
 
@@ -102,10 +104,11 @@ Search modes (`hybrid` | `vector` | `keyword`) are exposed on `POST /api/documen
 - pgvector rather than a separate vector database: one datastore, transactions across documents and chunks, and Postgres full-text search for free. A dedicated vector DB becomes worth it at tens of millions of vectors or with heavy metadata filtering needs.
 - The `vector(384)` column and the HNSW/GIN indexes cannot be expressed in the Prisma schema. The extension is declared via Prisma's `postgresqlExtensions` preview feature; the indexes are created idempotently at startup. The project uses `prisma db push`; a production setup would move this into migrations.
 
-### Questions to be ready for
+### Questions this design has to answer
 
 - Why hybrid search and not vector-only? (Give the `vaultctl freeze` example: keyword rank 1, vector alone was fine too, but identifiers and codes often are not.)
-- How did you choose chunk size? (Start at ~200 tokens with overlap; measure hit@k and answer faithfulness with the eval set; tune from there.)
+- How did you choose chunk size? (Start at ~200 tokens of the embedding tokenizer with overlap, inside the model's 512-token window; measure recall@k and nDCG with the eval set per retrieval mode; tune from there.)
+- Why does the vector query need an iterative scan? (Approximate indexes filter after the scan; without it, tenant filtering shrinks results for small tenants.)
 - How do you handle access control in RAG? (Every document has an owner and both retrievers filter by `d."userId"` inside the SQL. Filtering after retrieval would let other users' passages take the top-k slots, and one bug there leaks data straight into an answer.)
 - What breaks with PDFs? (Tables, multi-column layouts, scanned pages: `unpdf` covers text PDFs; production would add layout-aware parsing or OCR.)
 - What is "agentic RAG" here? (The model decides when to search and can search again with a rephrased query, instead of a fixed retrieve-then-answer step.)
@@ -145,7 +148,7 @@ Search modes (`hybrid` | `vector` | `keyword`) are exposed on `POST /api/documen
 | Output | Structured outputs are schema-validated; free-text answers are evaluated (see §6). |
 | Provider | Circuit breaker, timeouts, fallback. |
 
-### Questions to be ready for
+### Questions this design has to answer
 
 - Workflow or agent? (Prompt enhancement and evals are fixed workflows: predictable, cheap, testable. Chat is an agent because the user's intent is open-ended and the model must decide whether to search, how often, and whether to generate.)
 - How do you stop the agent from leaking data or doing damage? (Data/instruction separation in the prompt, flagged passages, read-only tools by default, approval for side effects, no secrets in tool outputs, step cap.)
@@ -160,7 +163,7 @@ Search modes (`hybrid` | `vector` | `keyword`) are exposed on `POST /api/documen
 - **Images are stored locally and served by the API** (`GET /api/generations/:id/image`). The upstream Pollinations URL contains the API key as a query parameter, so exposing it to browsers leaked the key. `StorageService` is deliberately S3-shaped (put/head/stream/delete by key) so a cloud implementation is a drop-in.
 - **Prompt enhancement is a structured call**: the fast model returns `{ enhancedPrompt, negativePrompt, styleTags }` validated by Zod. The negative prompt is passed to the image model. On any failure the original prompt is used.
 - **Text generation goes through `LlmService`**, so it is provider-agnostic and traced like everything else.
-- **Rate limiting is now enforced.** The throttler was configured but never registered as a guard; it is now a global guard, with the SSE, image and MCP routes exempt (named throttlers require `@SkipThrottle({ short: true, … })`, hence `SkipAllThrottles`).
+- **Rate limiting is now enforced.** The throttler was configured but never registered as a guard; it is now a global guard, with the SSE and image routes exempt (named throttlers require `@SkipThrottle({ short: true, … })`, hence `SkipAllThrottles`). MCP clients burst requests on connect, so `/api/mcp` has its own higher per-user limits (`MCP_THROTTLE`) rather than none.
 
 ---
 
@@ -176,12 +179,20 @@ This is enough to answer the operational questions (cost per feature, error rate
 
 See `server/evals/`. The harness ingests fixed fictional documents (so answers cannot come from model memory), then measures:
 
-- **Retrieval**: hit@k and MRR against the expected document, which is deterministic and free (local embeddings), so it runs on every CI push.
-- **Generation**: an LLM-as-judge scores correctness and faithfulness against the retrieved sources; deterministic checks verify expected keywords, forbidden strings (the injection test must never produce `PWNED`) and abstention on unanswerable questions. CI skips this half unless `POLLINATIONS_API_KEY` is set.
+- **Retrieval**: recall@5, MRR and nDCG@5 against **labelled gold passages** (verbatim excerpts that hold the answer), not just "a chunk from the right document". The corpus has 8 documents, including look-alikes (a second storage provider with different SLAs, a second runbook with different on-call names, a second HR policy), so a chunk from the wrong but similar document scores zero. 59 cases: 50 answerable, 2 with a prompt-injection payload, 7 unanswerable (excluded from retrieval metrics; there is nothing to retrieve). Vector, keyword and hybrid search are scored on the same cases and reported side by side. Current baseline (bge-small-en-v1.5):
 
-Thresholds live in `evals/config.ts`; a drop fails the run (and CI). The judge prompt is versioned like the assistant prompt, because changing the judge changes the numbers.
+  | Mode | recall@5 | MRR | nDCG@5 |
+  |---|---|---|---|
+  | vector | 0.96 | 0.86 | 0.89 |
+  | keyword | 0.98 | 0.81 | 0.85 |
+  | hybrid | 0.98 | 0.87 | 0.90 |
 
-Questions to be ready for: why an LLM judge and what are its failure modes (bias towards verbose answers, self-preference; mitigated by a rubric, a fixed strong model and deterministic checks alongside); why a fictional corpus; what you would add (per-chunk relevance labels, larger dataset from real user questions, regression on prompt changes).
+  It is deterministic and free (local embeddings), so it runs on every CI push. Before scoring, the harness checks that every gold passage fits inside one chunk, so a chunking change can't make a case unwinnable unnoticed.
+- **Generation**: an LLM judge scores correctness and faithfulness against every passage the answer could cite, numbered by the refs the answer uses; deterministic checks verify expected keywords, forbidden strings (the injection cases must never produce `PWNED`) and abstention on unanswerable questions. A case passes only when the keywords are present **and** the judge scores correctness at least 4. The judge is a different model from a different vendor (`EVAL_JUDGE_MODEL`, default `anthropic/claude-sonnet-5`) at temperature 0, and the run refuses to start if it equals the model being graded. CI skips this half unless `POLLINATIONS_API_KEY` is set.
+
+Thresholds live in `evals/config.ts`, a little below the measured baseline; a drop fails the run (and CI). The judge prompt is versioned like the assistant prompt, because changing the judge changes the numbers.
+
+Questions this design has to answer: why an LLM judge and what are its failure modes (verbosity bias and self-preference; mitigated by a rubric, a judge from another vendor at temperature 0, and deterministic checks that must also pass); why a fictional corpus with look-alike documents; why passage labels instead of document-level hits; what you would add (a larger dataset from real user questions, a reranker measured against the same labels, judge calibration against human grades).
 
 ---
 
@@ -215,11 +226,18 @@ The toolkit is also exposed as an MCP server over Streamable HTTP (`POST /api/mc
 
 ### Cost control
 
-Sign-up is open, so the provider balance is protected per user. Before a costly call (chat turn, RAG answer, text generation, prompt enhancement, image generation on an included model) `BudgetService` sums today's `LlmCall.costUsd` for the user and returns **429 "Budget Exceeded"** once `USER_DAILY_BUDGET_USD` is reached. It is a soft cap: requests already in flight can overshoot by their own cost; a hard cap would need reservations. Rate limits are tracked per user (`UserThrottlerGuard` runs after `AuthGuard`) instead of per IP.
+Sign-up is open, so the provider balance is protected per user. Before a costly call (chat turn, RAG answer, text generation, prompt enhancement, image generation on an included model) `BudgetService` sums today's `LlmCall.costUsd` for the user and returns **429 "Budget Exceeded"** once `USER_DAILY_BUDGET_USD` is reached. It is a soft cap, bounded from several sides:
+
+- A user can have at most 5 generations queued or running (`MAX_IN_FLIGHT_GENERATIONS`), so a burst of parallel requests can't all pass the check at $0.
+- The generation worker checks the budget again right before the paid call, so jobs queued together stop once the ones that finished first used the budget up.
+- A chat stream the user stops is still recorded: finished steps with their reported usage, and the model call in progress charged for its prompt (estimated). Otherwise stopping every reply would get around the budget.
+- Streams have a default output cap (`STREAM_MAX_OUTPUT_TOKENS`), and prompt fields have length limits.
+
+A hard cap would need reservations. Rate limits are tracked per user (`UserThrottlerGuard` runs after `AuthGuard`) instead of per IP.
 
 ### Guest demo sessions
 
-Interviewers won't create an account to look at a portfolio, so the landing page opens a guest session in one click.
+Few visitors create an account just to try an app, so the landing page opens a guest session in one click.
 
 - **Guests are real users.** Better Auth's anonymous plugin creates a `user` row with `isAnonymous` and a session cookie; no password, placeholder email on `.invalid`. Everything downstream (guards, `userId` filters, SSE scoping, traces) treats a guest like any account, so there is no second code path to secure. `AuthUser.isGuest` carries the flag to controllers.
 - **Filled before the response.** A Better Auth `after` hook on `/sign-in/anonymous` awaits `DemoTemplateService.copyInto` before the cookie reaches the browser, so the app opens with data in place. It copies the template account's completed generations, ready documents, conversations and the `LlmCall` rows behind them, all with new ids. Chunks and their vectors are copied with one `INSERT … SELECT` inside Postgres instead of re-embedding; their new ids are chosen in code so search results inside copied messages can be rewritten too. Ids inside JSON (tool outputs, message metadata, image URLs) are rewritten to point at the copies; the image file itself is shared with the template (`parameters.storageKey` is left alone). A failed copy is logged and the guest starts empty.
@@ -234,11 +252,11 @@ Rows created before auth have no owner, so `userId` is nullable for now (expand)
 
 ### How it is tested
 
-- `npm run test:auth`: two users against a running API, 29 checks. Protected routes return 401. Bob gets 404 or empty results for Alice's documents, chunks, searches (even when naming her document id) and traces. API keys work in both headers and bad keys get 401. Bob gets 403 posting into Alice's conversation. Sign-out invalidates the session.
+- `npm run test:auth`: two users against a running API. Conversation ids with path characters (`../images`) are rejected with 400, since ids become part of attachment storage paths. Protected routes return 401. Bob gets 404 or empty results for Alice's documents, chunks, searches (even when naming her document id) and traces. API keys work in both headers and bad keys get 401. Bob gets 403 posting into Alice's conversation. Sign-out invalidates the session.
 - `npm run test:demo`: guest sessions against a running API, no LLM calls. `/api/demo` is public, a guest is marked with its expiry and demo budget, can't open a second guest session, gets 403 for provider keys and API keys, and a second guest gets 404 for the first one's document. Sign-out ends the session.
-- Unit tests for API-key extraction, budget math, guest expiry and the id rewriting used when copying the template; `npm run mcp:smoke` authenticates with an API key.
+- Unit tests for API-key extraction, budget math, guest expiry, the id rewriting used when copying the template, the in-flight job cap, the worker budget re-check, per-user MCP throttling, and deleting a guest's copied image without deleting the template's file; `npm run mcp:smoke` authenticates with an API key.
 
-### Questions to be ready for
+### Questions this design has to answer
 
 - Why Better Auth and not NextAuth/Auth.js? (Auth.js is in maintenance mode and its maintainers point new projects to Better Auth; auth also has to live in the API because MCP clients never touch Next.js.)
 - Why no refresh tokens? (Database sessions are revoked instantly by deleting a row. JWT + refresh makes sense when many services must verify tokens without a shared database.)
@@ -277,7 +295,7 @@ In production the encryption key would come from a KMS (envelope encryption: a d
 - Unit: `SecretBox` (tampering, another user's context, another key), redaction, catalog invariants, the router (platform default, unlisted models, never another user's key), and `LlmService` with mock models (trace fields and catalog price, 401 explained without the key, no fallback onto the platform, the Anthropic cache breakpoint).
 - `npm run test:providers`: 28 checks against a running API with two users. Alice's key is a fake written to the database exactly as the service stores it, so no provider account is needed and Anthropic's 401 exercises the error path. Bob asking for the same model gets `Provider Key Required`; Bob's delete doesn't remove Alice's key; no response ever contains a key; the call is traced as Anthropic on Alice's key and invisible to Bob. With `E2E_ANTHROPIC_API_KEY` set it also saves a real key and checks that a chat turn costs money on the user's side and nothing on the budget.
 
-### Questions to be ready for
+### Questions this design has to answer
 
 - Why bring-your-own-key instead of one OpenRouter key? (The app stays free to try, and heavy users pay for their own usage. One gateway key is simpler, but the operator pays for everyone and provider-specific features go through a translation layer.)
 - Why encrypt the provider keys but hash the MCP API keys? (The server must send the provider key to the provider, so it needs the plaintext back. An API key only needs to be *checked*, so a hash is enough.)

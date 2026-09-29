@@ -10,7 +10,8 @@ import {
 import { NodeStreamableHTTPServerTransport } from '@modelcontextprotocol/node';
 import type { Request, Response } from 'express';
 import { McpService } from '../services/mcp.service';
-import { SkipAllThrottles } from '../../../shared/decorators/skip-all-throttles.decorator';
+import { Throttle } from '@nestjs/throttler';
+import { MCP_THROTTLE } from '../../../shared/constants/app.constants';
 import { CurrentUser } from '../../auth/decorators/current-user.decorator';
 import type { AuthUser } from '../../auth/types/auth.types';
 
@@ -27,11 +28,12 @@ const METHOD_NOT_ALLOWED = {
  * Each request gets its own server + transport, so there are no sessions to
  * track and the endpoint scales horizontally. GET (SSE resumption) and DELETE
  * (session teardown) only make sense for stateful servers and return 405.
- * MCP clients burst several requests on connect, so the route is not throttled;
- * costly tools are still bounded by the user's daily AI budget.
+ * MCP clients burst several requests on connect, so the route has higher
+ * per-user limits than the rest of the API (MCP_THROTTLE) rather than none;
+ * costly tools are also bounded by the user's daily AI budget.
  */
 @Controller('mcp')
-@SkipAllThrottles()
+@Throttle(MCP_THROTTLE)
 export class McpController {
   private readonly logger = new Logger(McpController.name);
 

@@ -3,10 +3,10 @@ import {
   Injectable,
   Logger,
   NotFoundException,
+  OnApplicationBootstrap,
 } from '@nestjs/common';
 import { InjectQueue } from '@nestjs/bullmq';
 import { Queue } from 'bullmq';
-import { randomUUID } from 'node:crypto';
 import { DocumentsRepository } from '../repositories/documents.repository';
 import {
   DocumentParserService,
@@ -17,8 +17,11 @@ import { QueryDocumentsDto } from '../dto/query-documents.dto';
 import {
   DOCUMENT_INGESTION_JOB_NAME,
   DOCUMENT_INGESTION_QUEUE,
+  JOB_ATTEMPTS,
+  JOB_BACKOFF_DELAY,
   RAG,
 } from '../../../shared/constants/app.constants';
+import { EmbeddingService } from '../../llm/services/embedding.service';
 import { DocumentStatus } from 'generated/prisma/enums';
 import type {
   DocumentIngestionJobData,
@@ -27,16 +30,37 @@ import type {
 } from '../types/documents.types';
 import type { PaginatedResult } from '../../generation/types/generation.types';
 
+/** One ingestion job per document at a time: a double click on "reindex" queues it once. */
+export const ingestionJobId = (documentId: string) => `ingest-${documentId}`;
+
 @Injectable()
-export class DocumentsService {
+export class DocumentsService implements OnApplicationBootstrap {
   private readonly logger = new Logger(DocumentsService.name);
 
   constructor(
     private readonly repository: DocumentsRepository,
     private readonly parser: DocumentParserService,
+    private readonly embedding: EmbeddingService,
     @InjectQueue(DOCUMENT_INGESTION_QUEUE)
     private readonly ingestionQueue: Queue<DocumentIngestionJobData>,
   ) {}
+
+  /**
+   * Vectors from different embedding models can't be compared, so search only
+   * reads chunks from the configured model. After EMBEDDING_MODEL changes, every
+   * document indexed with the old one is queued for re-indexing here; until its
+   * job finishes it simply doesn't match.
+   */
+  async onApplicationBootstrap(): Promise<void> {
+    const stale = await this.repository.findStaleEmbeddingDocumentIds(
+      this.embedding.modelName,
+    );
+    if (stale.length === 0) return;
+    this.logger.warn(
+      `${stale.length} document(s) were indexed with another embedding model; re-indexing with ${this.embedding.modelName}`,
+    );
+    for (const documentId of stale) await this.enqueueIngestion(documentId);
+  }
 
   async create(
     userId: string,
@@ -137,12 +161,28 @@ export class DocumentsService {
   }
 
   private async enqueueIngestion(documentId: string): Promise<void> {
+    const jobId = ingestionJobId(documentId);
+    // A finished job keeps its id for a while (removeOnComplete), and BullMQ ignores
+    // an add with a known id: clear a finished one so a later reindex still runs.
+    // A waiting or running job is left alone, so the document is queued once.
+    const existing = await this.ingestionQueue.getJob(jobId);
+    if (existing) {
+      const state = await existing.getState();
+      if (state === 'completed' || state === 'failed') {
+        await existing.remove();
+      } else {
+        this.logger.log(`Document ${documentId} is already queued (${state})`);
+        return;
+      }
+    }
+
     await this.ingestionQueue.add(
       DOCUMENT_INGESTION_JOB_NAME,
       { documentId },
       {
-        jobId: randomUUID(),
-        attempts: 1,
+        jobId,
+        attempts: JOB_ATTEMPTS,
+        backoff: { type: 'exponential', delay: JOB_BACKOFF_DELAY },
         removeOnComplete: { age: 3600, count: 500 },
         removeOnFail: { age: 86400, count: 1000 },
       },

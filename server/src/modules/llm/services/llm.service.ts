@@ -27,7 +27,11 @@ import {
   toUserKeyError,
 } from '../../../shared/errors/upstream.error';
 import { redactSecrets } from '../../../shared/ai/redact-secrets';
-import { LLM_CALL_TIMEOUT_MS } from '../../../shared/constants/app.constants';
+import {
+  LLM_CALL_TIMEOUT_MS,
+  STREAM_MAX_OUTPUT_TOKENS,
+} from '../../../shared/constants/app.constants';
+import { estimateTokens } from '../../../shared/ai/estimate-tokens';
 import {
   BYOK_PROVIDER_INFO,
   type ByokProvider,
@@ -255,7 +259,12 @@ export class LlmService {
   /**
    * Streaming (chat). Not wrapped in the breaker's timeout because a stream is
    * long-lived by design; it does fail fast when the circuit is open, and the
-   * call is traced when the stream ends.
+   * call is traced when the stream ends, fails or is stopped.
+   *
+   * A stopped stream is still paid for: the finished steps report their usage,
+   * and the model call that was running when the user pressed stop is charged
+   * for its prompt (estimated, since the provider never reported it). Without
+   * this, stopping every reply would get around the daily budget.
    */
   streamText(options: StreamTextOptions): StreamResult {
     const [target] = this.targetsFor(options);
@@ -266,24 +275,49 @@ export class LlmService {
     }
 
     const startedAt = Date.now();
+    // Prompt size of the model call in progress, if any (it has no usage yet).
+    let pendingPromptTokens = 0;
 
     return streamText({
       model: target.model,
       instructions: this.instructionsFor(target, options),
       ...promptInput(options),
       temperature: options.temperature,
-      maxOutputTokens: options.maxOutputTokens,
+      maxOutputTokens: options.maxOutputTokens ?? STREAM_MAX_OUTPUT_TOKENS,
       tools: options.tools,
       toolApproval: options.toolApproval,
       stopWhen: options.stopWhen,
       abortSignal: options.abortSignal,
       providerOptions: target.providerOptions,
+      onLanguageModelCallStart: (event) => {
+        pendingPromptTokens = estimateTokens(JSON.stringify(event.messages));
+      },
+      onLanguageModelCallEnd: () => {
+        pendingPromptTokens = 0;
+      },
       onEnd: async (event) => {
         await this.recordSuccess(options, target, startedAt, {
           usage: event.totalUsage,
           responseModel: event.response?.modelId,
           finishReason: event.finishReason,
           steps: event.steps.length,
+        });
+      },
+      onAbort: async ({ steps }) => {
+        const usage = steps.reduce(
+          (total, step) => ({
+            inputTokens:
+              (total.inputTokens ?? 0) + (step.usage.inputTokens ?? 0),
+            outputTokens:
+              (total.outputTokens ?? 0) + (step.usage.outputTokens ?? 0),
+          }),
+          { inputTokens: pendingPromptTokens, outputTokens: 0 },
+        );
+        await this.recordSuccess(options, target, startedAt, {
+          usage: usage as Parameters<typeof summarizeUsage>[0],
+          finishReason: 'aborted',
+          steps: steps.length,
+          aborted: { estimatedInputTokens: pendingPromptTokens },
         });
       },
       onError: async ({ error }) => {
@@ -435,6 +469,8 @@ export class LlmService {
       finishReason?: string;
       steps?: number;
       attempt?: number;
+      /** The stream was stopped; input tokens include this estimate for the unfinished call. */
+      aborted?: { estimatedInputTokens: number };
     },
   ): Promise<void> {
     const usage = summarizeUsage(details.usage);
@@ -460,6 +496,10 @@ export class LlmService {
         steps: details.steps,
         attempt: details.attempt,
         slot: target.slot,
+        ...(details.aborted && {
+          aborted: true,
+          estimatedInputTokens: details.aborted.estimatedInputTokens,
+        }),
       },
     });
   }

@@ -1,6 +1,6 @@
 # AI Engineering Roadmap & Notes
 
-Notes for extending Switchboard AI into a portfolio project that covers a typical "Senior AI Node.js Engineer" job description (RAG, agents, MCP, evals, cloud, CI/CD).
+The planning notes written before the AI platform work (RAG, agents, MCP, evals, cloud, CI/CD). Kept as a record of the plan: [`architecture.md`](./architecture.md) describes what was actually built, and some ideas below (LangGraph, Langfuse, reranking) were not.
 
 > Written 2026-09-13. Free tiers, pricing and framework landscape change often. Re-check before relying on numbers.
 
@@ -8,7 +8,7 @@ Notes for extending Switchboard AI into a portfolio project that covers a typica
 
 ## 1. Current state of the project
 
-**Already covered (good interview talking points):**
+**Already covered:**
 
 - Async job processing with BullMQ + Redis (retries, backoff, priority), which is the same foundation long-running agent runs need
 - Real-time streaming to the UI via SSE
@@ -68,7 +68,7 @@ Notes for extending Switchboard AI into a portfolio project that covers a typica
 5. Tracing + cost tracking, then AWS deployment
 6. Multi-agent critic loop, then GraphRAG or voice if time allows
 
-Keep short notes on decisions while building (chunk size, workflow vs agent, what evals showed, what broke). Interviewers dig into trade-offs more than feature lists.
+Keep short notes on decisions while building (chunk size, workflow vs agent, what evals showed, what broke): the trade-offs are worth more than the feature list.
 
 ---
 
