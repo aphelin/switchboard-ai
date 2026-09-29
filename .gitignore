@@ -22,6 +22,11 @@ server/prisma/migrations/
 *.log
 **/logs/
 
+# Local tool state
+.impeccable/
+.unlazy/
+.unlazy-hook-state.json
+
 # IDE
 .vscode/
 .idea/
