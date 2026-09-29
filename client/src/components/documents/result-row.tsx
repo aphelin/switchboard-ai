@@ -24,7 +24,7 @@ export function ResultRow({ result, position }: { result: SearchResult; position
       <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
         <span className="flex size-6 items-center justify-center rounded-full bg-white text-xs font-bold text-ground">{position}</span>
         <span className="truncate font-semibold">{result.documentTitle}</span>
-        <span className="text-sm text-dim">chunk {result.chunkIndex}</span>
+        <span className="text-sm text-dim">{result.section ? `${result.section} · ` : ""}chunk {result.chunkIndex}</span>
         {result.flagged && (
           <Badge variant="destructive" title={`Possible prompt injection: ${result.flagReasons.join("; ")}`}><ShieldAlert />Suspicious</Badge>
         )}

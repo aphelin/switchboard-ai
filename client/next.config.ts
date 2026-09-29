@@ -10,8 +10,30 @@ const apiUrl = new URL(
 const apiProtocol = apiUrl.protocol.replace(":", "") as "http" | "https";
 const apiPathPrefix = apiUrl.pathname.replace(/\/$/, "");
 
+/**
+ * Security headers for every page. The CSP covers what can't break the app:
+ * no framing (clickjacking on the key and budget dialogs), no plugins, no
+ * <base> or form hijacking. Script sources aren't restricted, because Next's
+ * inline bootstrap scripts would need per-request nonces.
+ */
+const securityHeaders = [
+  {
+    key: "Content-Security-Policy",
+    value: "frame-ancestors 'none'; object-src 'none'; base-uri 'self'; form-action 'self'",
+  },
+  { key: "X-Frame-Options", value: "DENY" },
+  { key: "X-Content-Type-Options", value: "nosniff" },
+  { key: "Referrer-Policy", value: "strict-origin-when-cross-origin" },
+  // The chat composer records voice input; nothing else needs device access.
+  { key: "Permissions-Policy", value: "camera=(), geolocation=(), microphone=(self)" },
+];
+
 const nextConfig: NextConfig = {
   output: "standalone",
+  poweredByHeader: false,
+  async headers() {
+    return [{ source: "/:path*", headers: securityHeaders }];
+  },
   images: {
     remotePatterns: [
       {
@@ -26,7 +48,6 @@ const nextConfig: NextConfig = {
       },
     ],
   },
-  reactStrictMode: false,
 };
 
 export default nextConfig;
