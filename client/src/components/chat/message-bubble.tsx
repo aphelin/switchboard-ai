@@ -26,9 +26,21 @@ interface MessageBubbleProps {
 
 /** The passages a reply cited, listed under it; each opens its document at that passage. */
 export function SourcesFooter({ message, onOpenSource }: { message: UIMessage; onOpenSource?: SourceHandler }) {
-  const groups = collectSources(message);
-  if (groups.length === 0) return null;
-  const multi = groups.length > 1;
+  const collected = collectSources(message);
+  if (collected.length === 0) return null;
+  // Refs are unique across a reply's searches, so a passage found twice is listed once.
+  // Replies saved before that numbered each search from 1: those keep an S1/S2 prefix.
+  const allRefs = collected.flatMap((group) => group.passages.map((passage) => `${passage.ref}:${passage.chunkId}`));
+  const uniqueRefs = new Set(collected.flatMap((group) => group.passages.map((passage) => passage.ref)));
+  const legacyNumbering = uniqueRefs.size !== new Set(allRefs).size;
+  const multi = legacyNumbering && collected.length > 1;
+  const seen = new Set<number>();
+  const groups = legacyNumbering
+    ? collected
+    : collected.map((group) => ({
+        ...group,
+        passages: group.passages.filter((passage) => !seen.has(passage.ref) && seen.add(passage.ref)),
+      }));
 
   return (
     <div className="text-sm" data-testid="sources">
@@ -39,7 +51,7 @@ export function SourcesFooter({ message, onOpenSource }: { message: UIMessage; o
             const content = (
               <>
                 <span className="tag tag-accent">{multi ? `S${gi + 1} ` : ""}[{passage.ref}]</span>
-                <span className="min-w-0 truncate">{passage.document}<span className="text-dim"> · chunk {passage.chunkIndex}</span></span>
+                <span className="min-w-0 truncate">{passage.document}<span className="text-dim"> · {passage.section ?? `chunk ${passage.chunkIndex}`}</span></span>
               </>
             );
             return (

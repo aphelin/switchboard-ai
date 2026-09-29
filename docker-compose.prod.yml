@@ -52,6 +52,10 @@ services:
     build:
       context: ./client
       dockerfile: Dockerfile
+      # Baked into the browser bundle at build time (set them in the shell or a root .env).
+      args:
+        NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:?set NEXT_PUBLIC_API_URL to the public API URL, e.g. https://api.example.com/api}
+        NEXT_PUBLIC_APP_URL: ${NEXT_PUBLIC_APP_URL:?set NEXT_PUBLIC_APP_URL to the public app URL}
     ports:
       - "3000:3000"
     env_file:

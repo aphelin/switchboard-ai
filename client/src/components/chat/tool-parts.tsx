@@ -86,7 +86,7 @@ function SearchToolCard({ part, onOpenSource, stopped }: Omit<ToolPartCardProps,
                   <span className="flex flex-wrap items-center gap-1.5">
                     <span className="tag tag-accent">[{passage.ref}]</span>
                     <span className="min-w-0 truncate font-semibold">{passage.document}</span>
-                    <span className="text-dim">chunk {passage.chunkIndex}</span>
+                    <span className="text-dim">{passage.section ?? `chunk ${passage.chunkIndex}`}</span>
                     {passage.untrusted && <Badge variant="destructive"><ShieldAlert />Untrusted</Badge>}
                     {onOpenSource && <span className="ml-auto flex items-center gap-1 text-xs font-semibold text-dim transition-colors group-hover/passage:text-ink"><Eye className="size-3.5" />View</span>}
                   </span>

@@ -116,6 +116,7 @@ export interface DocumentChunk {
   index: number;
   content: string;
   tokenCount: number;
+  section?: string | null;
 }
 
 export interface SearchResult {
@@ -123,6 +124,8 @@ export interface SearchResult {
   documentId: string;
   documentTitle: string;
   chunkIndex: number;
+  /** Heading path inside the document (older indexes have none). */
+  section?: string | null;
   content: string;
   /** Fused (RRF) score, only meaningful for ordering. */
   score: number;
@@ -180,6 +183,8 @@ export interface SourcePassage {
   documentId: string;
   document: string;
   chunkIndex: number;
+  /** Heading path inside the document, when it has one. */
+  section?: string;
   untrusted: boolean;
   content: string;
 }
