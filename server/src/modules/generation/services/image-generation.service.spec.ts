@@ -14,6 +14,7 @@ import type {
   RecordLlmCallInput,
   TraceService,
 } from '../../observability/services/trace.service';
+import type { LangfuseService } from '../../observability/services/langfuse.service';
 import type { UserKeyImageRoute } from '../../llm/types/llm.types';
 
 /** Assembled at runtime so secret scanners don't flag a key-shaped literal. */
@@ -52,7 +53,7 @@ const userRoute = (doGenerate: DoGenerate): UserKeyImageRoute => {
   };
 };
 
-function setup() {
+function setup(langfuseOn = false) {
   const records: RecordLlmCallInput[] = [];
   const trace = {
     record: vi.fn((input: RecordLlmCallInput) => {
@@ -65,12 +66,14 @@ function setup() {
       Promise.resolve({ data: Buffer.from('jpeg'), contentType: 'image/jpeg' }),
     ),
   };
+  const langfuse = { enabled: langfuseOn, recordGeneration: vi.fn() };
   const service = new ImageGenerationService(
     pollinations as unknown as PollinationsService,
     trace,
+    langfuse as unknown as LangfuseService,
     new CircuitBreakerService(),
   );
-  return { service, pollinations, records };
+  return { service, pollinations, records, langfuse };
 }
 
 describe('ImageGenerationService', () => {
@@ -199,5 +202,81 @@ describe('ImageGenerationService', () => {
       status: 'ok',
       costUsd: 0.002,
     });
+  });
+
+  it('records the call in Langfuse with the prompt, the price and the image', async () => {
+    const { service, langfuse } = setup(true);
+
+    await service.generate({
+      route: {
+        source: 'platform',
+        model: catalogModel(FALLBACK_PLATFORM_IMAGE_MODELS, 'platform:flux'),
+      },
+      prompt: 'a lighthouse',
+      width: 1024,
+      userId: 'user-1',
+    });
+
+    expect(langfuse.recordGeneration).toHaveBeenCalledWith(
+      expect.objectContaining({
+        name: 'generate-image',
+        model: 'flux',
+        input: expect.objectContaining({
+          prompt: 'a lighthouse',
+          width: 1024,
+        }) as unknown,
+        output: `data:image/jpeg;base64,${Buffer.from('jpeg').toString('base64')}`,
+        costUsd: 0.002,
+      }),
+    );
+  });
+
+  it('records an edit with its source image, and a failure without leaking the key', async () => {
+    const { service, langfuse } = setup(true);
+    const route = userRoute(() => {
+      throw new APICallError({
+        message: `bad key ${GOOGLE_KEY}`,
+        url: 'https://generativelanguage.googleapis.com',
+        requestBodyValues: {},
+        statusCode: 400,
+        isRetryable: false,
+      });
+    });
+
+    await service
+      .generate({
+        route,
+        prompt: 'make it night',
+        source: {
+          data: Buffer.from(PNG),
+          contentType: 'image/png',
+          generationId: 'gen-0',
+        },
+        userId: 'user-1',
+      })
+      .catch(() => undefined);
+
+    const [record] = langfuse.recordGeneration.mock.calls[0] as [
+      { name: string; input: { image: string }; error: string },
+    ];
+    expect(record.name).toBe('edit-image');
+    expect(record.input.image).toBe(
+      `data:image/png;base64,${Buffer.from(PNG).toString('base64')}`,
+    );
+    expect(record.error).toBeTruthy();
+    expect(record.error).not.toContain(GOOGLE_KEY);
+  });
+
+  it('skips Langfuse entirely when it is off', async () => {
+    const { service, langfuse } = setup();
+    await service.generate({
+      route: {
+        source: 'platform',
+        model: catalogModel(FALLBACK_PLATFORM_IMAGE_MODELS, 'platform:flux'),
+      },
+      prompt: 'a lighthouse',
+      userId: 'user-1',
+    });
+    expect(langfuse.recordGeneration).not.toHaveBeenCalled();
   });
 });

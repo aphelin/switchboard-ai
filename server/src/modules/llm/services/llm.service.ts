@@ -17,6 +17,7 @@ import type { z } from 'zod';
 import { ModelRegistryService } from './model-registry.service';
 import { PricingService } from './pricing.service';
 import { TraceService } from '../../observability/services/trace.service';
+import { LangfuseService } from '../../observability/services/langfuse.service';
 import { CircuitBreakerService } from '../../../shared/circuit-breaker/circuit-breaker.service';
 import {
   isCircuitOpenError,
@@ -116,7 +117,8 @@ interface CallTarget {
  * Single entry point for every model call. Adds what raw SDK calls lack in
  * production: per-provider circuit breaker, optional provider fallback,
  * schema-validated structured output with one repair attempt, and a trace
- * record (tokens, cost, latency, who pays) for each call.
+ * record (tokens, cost, latency, who pays) for each call, also sent to
+ * Langfuse when it is configured.
  *
  * A call runs on the platform provider (the app's key, with fallback) or on a
  * provider with the user's own key (no fallback: a request is never silently
@@ -132,6 +134,7 @@ export class LlmService {
     private readonly registry: ModelRegistryService,
     private readonly pricing: PricingService,
     private readonly trace: TraceService,
+    private readonly langfuse: LangfuseService,
     private readonly circuitBreakerService: CircuitBreakerService,
   ) {
     const slots: ProviderSlot[] = registry.hasFallback
@@ -172,17 +175,20 @@ export class LlmService {
       const startedAt = Date.now();
       try {
         const result = await this.fire(target, () =>
-          generateText({
-            model: target.model,
-            instructions: this.instructionsFor(target, options),
-            ...promptInput(options),
-            temperature: options.temperature,
-            maxOutputTokens: options.maxOutputTokens,
-            tools: options.tools,
-            stopWhen: options.stopWhen,
-            abortSignal: options.abortSignal,
-            providerOptions: target.providerOptions,
-          }),
+          this.withLangfuse(options, target, () =>
+            generateText({
+              model: target.model,
+              instructions: this.instructionsFor(target, options),
+              ...promptInput(options),
+              temperature: options.temperature,
+              maxOutputTokens: options.maxOutputTokens,
+              tools: options.tools,
+              stopWhen: options.stopWhen,
+              abortSignal: options.abortSignal,
+              providerOptions: target.providerOptions,
+              telemetry: this.langfuse.telemetry(options.name),
+            }),
+          ),
         );
         await this.recordSuccess(options, target, startedAt, {
           usage: result.totalUsage,
@@ -212,14 +218,17 @@ export class LlmService {
         const startedAt = Date.now();
         try {
           const result = await this.fire(target, () =>
-            generateText({
-              model: target.model,
-              output: Output.object({ schema }),
-              instructions: options.instructions,
-              prompt,
-              temperature: options.temperature,
-              providerOptions: target.providerOptions,
-            }),
+            this.withLangfuse(options, target, () =>
+              generateText({
+                model: target.model,
+                output: Output.object({ schema }),
+                instructions: options.instructions,
+                prompt,
+                temperature: options.temperature,
+                providerOptions: target.providerOptions,
+                telemetry: this.langfuse.telemetry(options.name),
+              }),
+            ),
           );
           await this.recordSuccess(options, target, startedAt, {
             usage: result.totalUsage,
@@ -278,52 +287,55 @@ export class LlmService {
     // Prompt size of the model call in progress, if any (it has no usage yet).
     let pendingPromptTokens = 0;
 
-    return streamText({
-      model: target.model,
-      instructions: this.instructionsFor(target, options),
-      ...promptInput(options),
-      temperature: options.temperature,
-      maxOutputTokens: options.maxOutputTokens ?? STREAM_MAX_OUTPUT_TOKENS,
-      tools: options.tools,
-      toolApproval: options.toolApproval,
-      stopWhen: options.stopWhen,
-      abortSignal: options.abortSignal,
-      providerOptions: target.providerOptions,
-      onLanguageModelCallStart: (event) => {
-        pendingPromptTokens = estimateTokens(JSON.stringify(event.messages));
-      },
-      onLanguageModelCallEnd: () => {
-        pendingPromptTokens = 0;
-      },
-      onEnd: async (event) => {
-        await this.recordSuccess(options, target, startedAt, {
-          usage: event.totalUsage,
-          responseModel: event.response?.modelId,
-          finishReason: event.finishReason,
-          steps: event.steps.length,
-        });
-      },
-      onAbort: async ({ steps }) => {
-        const usage = steps.reduce(
-          (total, step) => ({
-            inputTokens:
-              (total.inputTokens ?? 0) + (step.usage.inputTokens ?? 0),
-            outputTokens:
-              (total.outputTokens ?? 0) + (step.usage.outputTokens ?? 0),
-          }),
-          { inputTokens: pendingPromptTokens, outputTokens: 0 },
-        );
-        await this.recordSuccess(options, target, startedAt, {
-          usage: usage as Parameters<typeof summarizeUsage>[0],
-          finishReason: 'aborted',
-          steps: steps.length,
-          aborted: { estimatedInputTokens: pendingPromptTokens },
-        });
-      },
-      onError: async ({ error }) => {
-        await this.recordFailure(options, target, startedAt, error);
-      },
-    });
+    return this.withLangfuse(options, target, () =>
+      streamText({
+        model: target.model,
+        instructions: this.instructionsFor(target, options),
+        ...promptInput(options),
+        temperature: options.temperature,
+        maxOutputTokens: options.maxOutputTokens ?? STREAM_MAX_OUTPUT_TOKENS,
+        tools: options.tools,
+        toolApproval: options.toolApproval,
+        stopWhen: options.stopWhen,
+        abortSignal: options.abortSignal,
+        providerOptions: target.providerOptions,
+        telemetry: this.langfuse.telemetry(options.name),
+        onLanguageModelCallStart: (event) => {
+          pendingPromptTokens = estimateTokens(JSON.stringify(event.messages));
+        },
+        onLanguageModelCallEnd: () => {
+          pendingPromptTokens = 0;
+        },
+        onEnd: async (event) => {
+          await this.recordSuccess(options, target, startedAt, {
+            usage: event.totalUsage,
+            responseModel: event.response?.modelId,
+            finishReason: event.finishReason,
+            steps: event.steps.length,
+          });
+        },
+        onAbort: async ({ steps }) => {
+          const usage = steps.reduce(
+            (total, step) => ({
+              inputTokens:
+                (total.inputTokens ?? 0) + (step.usage.inputTokens ?? 0),
+              outputTokens:
+                (total.outputTokens ?? 0) + (step.usage.outputTokens ?? 0),
+            }),
+            { inputTokens: pendingPromptTokens, outputTokens: 0 },
+          );
+          await this.recordSuccess(options, target, startedAt, {
+            usage: usage as Parameters<typeof summarizeUsage>[0],
+            finishReason: 'aborted',
+            steps: steps.length,
+            aborted: { estimatedInputTokens: pendingPromptTokens },
+          });
+        },
+        onError: async ({ error }) => {
+          await this.recordFailure(options, target, startedAt, error);
+        },
+      }),
+    );
   }
 
   /** Primary then fallback for the platform provider; exactly one target for a user's own key. */
@@ -395,6 +407,44 @@ export class LlmService {
       this.userKeyBreakers.set(provider, breaker);
     }
     return breaker;
+  }
+
+  /**
+   * Sends the call to Langfuse (when configured) under the same name, user and
+   * trace id as its LlmCall row, priced with the same rates. Each call is one
+   * Langfuse trace; our trace id (conversation, generation or eval run) groups
+   * them as a Langfuse session, and a prompt version becomes the trace version.
+   */
+  private withLangfuse<T>(
+    context: LlmCallContext,
+    target: CallTarget,
+    run: () => T,
+  ): T {
+    const { promptVersion, ...rest } = context.metadata ?? {};
+    const details: Record<string, unknown> = { ...rest, slot: target.slot };
+    // Langfuse keeps short string metadata on every span; id lists and the like stay in LlmCall.
+    const metadata = Object.fromEntries(
+      Object.entries(details).filter(
+        (entry): entry is [string, string] =>
+          typeof entry[1] === 'string' && entry[1].length <= 200,
+      ),
+    );
+    return this.langfuse.run(
+      {
+        attributes: {
+          traceName: context.name,
+          userId: context.userId,
+          sessionId: context.traceId,
+          version:
+            typeof promptVersion === 'string' ? promptVersion : undefined,
+          tags: [target.provider, target.keySource],
+          metadata,
+        },
+        costOf: (usage, responseModel) =>
+          this.pricing.estimateCost(target.pricingKey, responseModel, usage),
+      },
+      run,
+    );
   }
 
   private instructionsFor(

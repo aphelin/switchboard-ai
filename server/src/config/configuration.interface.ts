@@ -89,6 +89,14 @@ export interface CredentialsConfig {
   encryptionKey: string | null;
 }
 
+export interface LangfuseConfig {
+  publicKey: string;
+  secretKey: string;
+  baseUrl: string;
+  /** Keeps development and production traces apart in one Langfuse project. */
+  environment: string;
+}
+
 export interface AppConfiguration {
   app: AppConfig;
   credentials: CredentialsConfig;
@@ -100,4 +108,6 @@ export interface AppConfiguration {
   embedding: EmbeddingConfig;
   auth: AuthConfig;
   demo: DemoConfig;
+  /** Hosted tracing next to the LlmCall table; null when the keys are not set. */
+  langfuse: LangfuseConfig | null;
 }

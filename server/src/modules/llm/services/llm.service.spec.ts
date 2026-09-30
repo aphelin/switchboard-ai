@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
-import { APICallError } from 'ai';
+import { APICallError, simulateReadableStream, type Telemetry } from 'ai';
 import { MockLanguageModelV4 } from 'ai/test';
+import type { ConfigService } from '@nestjs/config';
 import { LlmService } from './llm.service';
 import { PricingService } from './pricing.service';
 import { CircuitBreakerService } from '../../../shared/circuit-breaker/circuit-breaker.service';
@@ -10,7 +11,12 @@ import type {
   RecordLlmCallInput,
   TraceService,
 } from '../../observability/services/trace.service';
+import {
+  LangfuseService,
+  type LangfuseCall,
+} from '../../observability/services/langfuse.service';
 import type { UserKeyRoute } from '../types/llm.types';
+import type { AppConfiguration } from '../../../config/configuration.interface';
 
 const USER_KEY = 'sk-ant-api03-user-secret-key-1234567890';
 
@@ -51,7 +57,15 @@ const userRoute = (model: MockLanguageModelV4): UserKeyRoute => ({
   languageModel: vi.fn(() => model),
 });
 
-function setup(options: { hasFallback?: boolean } = {}) {
+const langfuseOff = () =>
+  new LangfuseService({ get: () => null } as unknown as ConfigService<
+    AppConfiguration,
+    true
+  >);
+
+function setup(
+  options: { hasFallback?: boolean; langfuse?: LangfuseService } = {},
+) {
   const platformModel = new MockLanguageModelV4({
     provider: 'pollinations',
     doGenerate: textResult('from the platform'),
@@ -89,6 +103,7 @@ function setup(options: { hasFallback?: boolean } = {}) {
     registry,
     new PricingService(registry),
     trace,
+    options.langfuse ?? langfuseOff(),
     new CircuitBreakerService(),
   );
   return { llm, registry, platformModel, records };
@@ -291,5 +306,100 @@ describe('LlmService.streamText', () => {
       if (part.type === 'text-delta') controller.abort();
     }
     expect(callOptions?.maxOutputTokens).toBe(8192);
+  });
+});
+
+describe('LlmService with Langfuse', () => {
+  /** A Langfuse stand-in that records each call's Langfuse context and telemetry events. */
+  const fakeLangfuse = () => {
+    const integration = {
+      onStart: vi.fn(),
+      onEnd: vi.fn(),
+    } satisfies Telemetry;
+    const calls: LangfuseCall[] = [];
+    const langfuse = {
+      telemetry: (functionId: string) => ({
+        functionId,
+        integrations: integration,
+      }),
+      run: (call: LangfuseCall, fn: () => unknown) => {
+        calls.push(call);
+        return fn();
+      },
+    } as unknown as LangfuseService;
+    return { langfuse, calls, integration };
+  };
+
+  const expectedAttributes = {
+    traceName: 'chat.stream',
+    userId: 'user-1',
+    sessionId: 'conversation-1',
+    version: '2026-09-16.1',
+    tags: ['anthropic', 'user'],
+    metadata: { documentScope: 'all' },
+  };
+
+  it('sends a call under the same name, user and trace id as its LlmCall row, priced the same way', async () => {
+    const { langfuse, calls, integration } = fakeLangfuse();
+    const { llm, records } = setup({ langfuse });
+
+    await llm.generateText({
+      name: 'chat.stream',
+      userId: 'user-1',
+      traceId: 'conversation-1',
+      metadata: {
+        promptVersion: '2026-09-16.1',
+        documentScope: 'all',
+        documentIds: ['doc-1'],
+      },
+      route: userRoute(
+        new MockLanguageModelV4({ doGenerate: textResult('ok') }),
+      ),
+      prompt: 'hi',
+    });
+
+    expect(calls[0].attributes).toEqual(expectedAttributes);
+    expect(integration.onStart).toHaveBeenCalledWith(
+      expect.objectContaining({ functionId: 'chat.stream' }),
+    );
+    expect(integration.onEnd).toHaveBeenCalledOnce();
+    // The same usage costs the same in Langfuse as in the LlmCall row.
+    expect(
+      calls[0].costOf?.({ inputTokens: 1000, outputTokens: 100 }),
+    ).toBeCloseTo(records[0].costUsd!, 10);
+  });
+
+  it('sends streamed calls too', async () => {
+    const { langfuse, calls, integration } = fakeLangfuse();
+    const { llm } = setup({ langfuse });
+    const model = new MockLanguageModelV4({
+      doStream: {
+        stream: simulateReadableStream({
+          chunks: [
+            { type: 'text-start', id: 't1' },
+            { type: 'text-delta', id: 't1', delta: 'Hello' },
+            { type: 'text-end', id: 't1' },
+            {
+              type: 'finish',
+              finishReason: { unified: 'stop', raw: undefined },
+              usage: textResult('').usage,
+            },
+          ],
+        }),
+      },
+    });
+
+    const result = llm.streamText({
+      name: 'chat.stream',
+      userId: 'user-1',
+      traceId: 'conversation-1',
+      metadata: { promptVersion: '2026-09-16.1', documentScope: 'all' },
+      route: userRoute(model),
+      prompt: 'hi',
+    });
+
+    expect(await result.text).toBe('Hello');
+    expect(calls[0].attributes).toEqual(expectedAttributes);
+    await vi.waitFor(() => expect(integration.onEnd).toHaveBeenCalledOnce());
   });
 });
