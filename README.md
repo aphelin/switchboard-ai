@@ -47,7 +47,7 @@ Design notes and trade-offs live in [`docs/architecture.md`](./docs/architecture
                                                    │  chat agent ─┘                            │
 ┌────────────┐   Streamable HTTP (JSON-RPC)         │  mcp                                      │
 │ MCP client │◂──────────────────────────────────▸│  llm ─▸ platform or user-key provider      │
-│ (Claude …) │                                     │  observability ─▸ Postgres (LlmCall)      │
+│ (Claude …) │                                     │  observability ─▸ Postgres + Langfuse     │
 └────────────┘                                     │  documents ─▸ Postgres + pgvector         │
                                                    │  circuit breakers ─▸ Pollinations / LLM   │
                                                    └───────────────────────────────────────────┘
@@ -74,7 +74,7 @@ Every model call goes through `LlmService` (provider registry, breaker, optional
 - **Local embeddings:** free, offline, identical in dev/CI/Docker, and fast enough at this scale; a hosted embedding API is a config switch.
 - **Hybrid retrieval + RRF:** vectors catch paraphrases, keywords catch exact identifiers and commands; RRF merges them without score calibration.
 - **Human-in-the-loop for image generation:** the tool has a cost and a visible side effect, so the agent asks first.
-- **Own tracing table:** no extra services to run; the schema maps 1:1 to a hosted tracer (Langfuse/LangSmith) later.
+- **Own tracing table, plus Langfuse:** the `LlmCall` table needs no extra service and drives the budgets and the Traces page. Two keys also send every model call to Langfuse Cloud (free tier) for prompt-level debugging. Self-hosting Langfuse would only change its URL, but adds ClickHouse, a worker and blob storage, which this scale doesn't need.
 - **BullMQ + Redis, SSE, NestJS, Prisma, shadcn/ui:** as in the original project (see git history), they are also the foundation the agent builds on: the agent's image tool simply waits on the existing queue.
 
 ### Design Philosophy
@@ -125,6 +125,7 @@ The original project deliberately avoided provider abstractions (KISS/YAGNI). Mu
 ### Observability and evaluation
 
 - `LlmCall` trace per model call: name, trace id, provider, model, tokens, cached tokens, estimated cost (Pollinations prices loaded at startup), latency, status; `/traces` page with summaries by model and by feature
+- Optional Langfuse export (set `LANGFUSE_PUBLIC_KEY` and `LANGFUSE_SECRET_KEY`): every call through `LlmService` also goes to Langfuse through AI SDK telemetry and OpenTelemetry. One trace per chat turn (the agent, its steps, each model call and tool call) and per image job (prompt enhancement, then the image call, with the images viewable in Langfuse), one session per conversation, the same name, user, model and cost as the `LlmCall` row, the prompt version as the trace version, and API keys masked before export
 - Eval harness (`server/evals`): 59 cases over 8 fictional documents, including look-alike distractors. Every CI push scores retrieval against labelled gold passages (recall@5, MRR, nDCG@5) for vector, keyword and hybrid search side by side (free, deterministic). With `POLLINATIONS_API_KEY` set, answers are also graded by an LLM judge on a different model (correctness, faithfulness, abstention, prompt injection). Thresholds fail the job
 - Vitest unit tests for the pure logic (RRF, chunking, injection scanner, pricing, history trimming, key encryption and redaction, model routing) and for `LlmService` with mock models
 
@@ -176,6 +177,9 @@ CLIENT_URL=http://localhost:3000
 BETTER_AUTH_SECRET=generate_with_openssl_rand_base64_32
 # Optional: lets users add their own OpenAI / Anthropic / Google keys
 CREDENTIALS_ENCRYPTION_KEY=generate_with_openssl_rand_base64_32
+# Optional: also send model calls to Langfuse (keys from a free Langfuse Cloud project)
+LANGFUSE_PUBLIC_KEY=
+LANGFUSE_SECRET_KEY=
 ```
 
 ```bash
@@ -352,7 +356,7 @@ npx @modelcontextprotocol/inspector --cli http://localhost:4000/api/mcp --method
 - **Contract migration**: make `userId` NOT NULL once legacy rows are claimed
 - **Conversation summarisation** instead of a plain sliding window
 - **S3 storage** for images (the storage interface is already S3-shaped) and **Prisma migrations** instead of `db push` + startup DDL
-- **Hosted tracing** (Langfuse / LangSmith / OpenTelemetry) fed from the existing `LlmCall` records
+- **Langfuse scores**: send the eval judge's grades and users' feedback as Langfuse scores, and trace transcription there too (today it is only in `LlmCall`)
 - **Reranking model** on top of hybrid retrieval; layout-aware PDF parsing / OCR
 - **Cloud deployment** (AWS ECS Fargate, RDS with pgvector, ElastiCache, S3) with Terraform
 - **Multi-agent creative workflow** (planner → prompt writer → critic with a vision model) as a queued, resumable run

@@ -76,4 +76,14 @@ export const validationSchema = Joi.object({
   // Encrypts users' own provider API keys (AES-256-GCM). 32 random bytes, base64: `openssl rand -base64 32`.
   // Unset = users can only use the included (platform) models.
   CREDENTIALS_ENCRYPTION_KEY: Joi.string().base64().allow('').optional(),
+
+  // Langfuse (hosted tracing of model calls, next to the LlmCall table). Unset = off.
+  LANGFUSE_PUBLIC_KEY: Joi.string().allow('').optional(),
+  LANGFUSE_SECRET_KEY: Joi.any().when('LANGFUSE_PUBLIC_KEY', {
+    is: Joi.string().min(1).required(),
+    then: Joi.string().required(),
+    otherwise: Joi.string().allow('').optional(),
+  }),
+  // EU cloud by default; US is https://us.cloud.langfuse.com, or a self-hosted URL
+  LANGFUSE_BASE_URL: Joi.string().uri().allow('').optional(),
 });
