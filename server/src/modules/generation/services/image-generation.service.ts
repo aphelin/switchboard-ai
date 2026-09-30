@@ -3,6 +3,10 @@ import { generateImage } from 'ai';
 import type CircuitBreaker from 'opossum';
 import { PollinationsService } from '../../pollinations/services/pollinations.service';
 import { TraceService } from '../../observability/services/trace.service';
+import {
+  imageDataUri,
+  LangfuseService,
+} from '../../observability/services/langfuse.service';
 import { CircuitBreakerService } from '../../../shared/circuit-breaker/circuit-breaker.service';
 import {
   isCircuitOpenError,
@@ -45,6 +49,7 @@ export interface GeneratedImage {
  * app's key, or a provider's image model on the user's own key (no fallback
  * between them). Every call is traced like an LLM call, with the per-image price
  * and who pays, so image spend on the app's key counts toward the daily budget.
+ * With Langfuse on it is also recorded there, with the prompt and the images.
  */
 @Injectable()
 export class ImageGenerationService {
@@ -53,6 +58,7 @@ export class ImageGenerationService {
   constructor(
     private readonly pollinations: PollinationsService,
     private readonly trace: TraceService,
+    private readonly langfuse: LangfuseService,
     private readonly circuitBreakerService: CircuitBreakerService,
   ) {}
 
@@ -71,6 +77,7 @@ export class ImageGenerationService {
 
     try {
       const image = await this.run(request);
+      this.recordInLangfuse(request, startedAt, { image });
       await this.trace.record({
         ...call,
         costUsd: route.model.pricePerImageUsd,
@@ -85,13 +92,15 @@ export class ImageGenerationService {
       });
       return image;
     } catch (error) {
+      const message = redactSecrets(
+        error instanceof Error ? error.message : String(error),
+      );
+      this.recordInLangfuse(request, startedAt, { error: message });
       await this.trace.record({
         ...call,
         latencyMs: Date.now() - startedAt,
         status: 'error',
-        error: redactSecrets(
-          error instanceof Error ? error.message : String(error),
-        ),
+        error: message,
         metadata: {
           catalogModel: route.model.id,
           ...(source && { sourceGenerationId: source.generationId }),
@@ -99,6 +108,36 @@ export class ImageGenerationService {
       });
       throw error;
     }
+  }
+
+  /** The prompt, settings and (for an edit) source image in, the image out; encoded only when Langfuse is on. */
+  private recordInLangfuse(
+    request: ImageRequest,
+    startedAt: number,
+    outcome: { image: GeneratedImage } | { error: string },
+  ): void {
+    if (!this.langfuse.enabled) return;
+    const { route, source } = request;
+    this.langfuse.recordGeneration({
+      name: source ? 'edit-image' : 'generate-image',
+      startTime: new Date(startedAt),
+      model: route.model.modelId,
+      input: {
+        prompt: request.prompt,
+        negativePrompt: request.negativePrompt,
+        width: request.width,
+        height: request.height,
+        seed: request.seed,
+        ...(source && { image: imageDataUri(source) }),
+      },
+      metadata: { catalogModel: route.model.id, keySource: route.source },
+      ...('image' in outcome
+        ? {
+            output: imageDataUri(outcome.image),
+            costUsd: route.model.pricePerImageUsd,
+          }
+        : { error: outcome.error }),
+    });
   }
 
   private async run(request: ImageRequest): Promise<GeneratedImage> {
