@@ -22,6 +22,16 @@ function setup(source: 'platform' | 'user') {
       Promise.reject(new BudgetExceededException(0.5)),
     ),
   };
+  const storage = {
+    extensionFor: () => '.png',
+    put: vi.fn(() => Promise.resolve()),
+  };
+  const trace = { setOutput: vi.fn(), setError: vi.fn() };
+  const langfuse = {
+    job: vi.fn((_job: unknown, fn: (t: typeof trace) => Promise<void>) =>
+      fn(trace),
+    ),
+  };
   const config = { get: () => ({ publicUrl: 'http://localhost:4000' }) };
   const processor = new GenerationProcessor(
     repository as never,
@@ -30,8 +40,9 @@ function setup(source: 'platform' | 'user') {
     {} as never,
     router as never,
     {} as never,
-    {} as never,
+    storage as never,
     budget as never,
+    langfuse as never,
     config as never,
   );
   const job = {
@@ -44,18 +55,30 @@ function setup(source: 'platform' | 'user') {
       parameters: {},
     },
   } as Job<GenerationJobData>;
-  return { processor, job, repository, imageGeneration, budget };
+  return {
+    processor,
+    job,
+    repository,
+    imageGeneration,
+    budget,
+    langfuse,
+    trace,
+  };
 }
 
 describe('GenerationProcessor budget', () => {
   it('fails a platform job queued past the daily budget', async () => {
-    const { processor, job, repository, imageGeneration } = setup('platform');
+    const { processor, job, repository, imageGeneration, trace } =
+      setup('platform');
     await processor.process(job);
     expect(imageGeneration.generate).not.toHaveBeenCalled();
     expect(repository.updateStatus).toHaveBeenLastCalledWith(
       'gen-1',
       JobStatus.FAILED,
       { error: expect.stringContaining('Daily AI budget') as unknown },
+    );
+    expect(trace.setError).toHaveBeenCalledWith(
+      expect.stringContaining('Daily AI budget'),
     );
   });
 
@@ -65,5 +88,31 @@ describe('GenerationProcessor budget', () => {
     await processor.process(job);
     expect(budget.assertWithinBudget).not.toHaveBeenCalled();
     expect(imageGeneration.generate).toHaveBeenCalled();
+  });
+});
+
+describe('GenerationProcessor tracing', () => {
+  it('traces an image job in Langfuse as one unit, with the image as its output', async () => {
+    const { processor, job, imageGeneration, langfuse, trace } = setup('user');
+    imageGeneration.generate.mockResolvedValue({
+      data: Buffer.from('png'),
+      contentType: 'image/png',
+    });
+
+    await processor.process(job);
+
+    expect(langfuse.job).toHaveBeenCalledWith(
+      {
+        name: 'generation.image',
+        userId: 'user-1',
+        sessionId: 'gen-1',
+        input: 'a lighthouse',
+      },
+      expect.any(Function),
+    );
+    expect(trace.setOutput).toHaveBeenCalledWith(
+      `data:image/png;base64,${Buffer.from('png').toString('base64')}`,
+    );
+    expect(trace.setError).not.toHaveBeenCalled();
   });
 });

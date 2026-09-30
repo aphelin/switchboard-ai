@@ -13,6 +13,11 @@ import { PromptEnhancerService } from '../../llm/services/prompt-enhancer.servic
 import { ModelRouterService } from '../../providers/services/model-router.service';
 import { StorageService } from '../../../shared/storage/storage.service';
 import { BudgetService } from '../../auth/services/budget.service';
+import {
+  imageDataUri,
+  LangfuseService,
+  type LangfuseJobTrace,
+} from '../../observability/services/langfuse.service';
 import { GENERATION_QUEUE } from '../../../shared/constants/app.constants';
 import { GenerationType, JobStatus } from 'generated/prisma/enums';
 import type { AppConfiguration } from '../../../config/configuration.interface';
@@ -50,6 +55,7 @@ export class GenerationProcessor extends WorkerHost {
     private readonly promptEnhancer: PromptEnhancerService,
     private readonly storage: StorageService,
     private readonly budget: BudgetService,
+    private readonly langfuse: LangfuseService,
     configService: ConfigService<AppConfiguration, true>,
   ) {
     super();
@@ -57,18 +63,34 @@ export class GenerationProcessor extends WorkerHost {
   }
 
   async process(job: Job<GenerationJobData>): Promise<void> {
-    const {
-      generationId,
-      userId,
-      prompt,
-      type,
-      enhance,
-      parameters,
-      llmModel,
-    } = job.data;
+    const { generationId, userId, prompt, type, parameters, llmModel } =
+      job.data;
     const context: JobContext = { generationId, userId, llmModel };
 
     this.logger.log(`Processing generation ${generationId} (type: ${type})`);
+
+    if (type !== GenerationType.IMAGE) return this.run(job.data, context);
+
+    // One Langfuse trace per image job: the prompt enhancement, then the image call.
+    const edit = !!(parameters as ImageParameters | undefined)
+      ?.sourceGenerationId;
+    await this.langfuse.job(
+      {
+        name: edit ? 'generation.image-edit' : 'generation.image',
+        userId,
+        sessionId: generationId,
+        input: prompt,
+      },
+      (trace) => this.run(job.data, context, trace),
+    );
+  }
+
+  private async run(
+    data: GenerationJobData,
+    context: JobContext,
+    trace?: LangfuseJobTrace,
+  ): Promise<void> {
+    const { generationId, prompt, type, enhance, parameters } = data;
 
     try {
       if (await this.isCancelled(generationId)) return;
@@ -84,6 +106,7 @@ export class GenerationProcessor extends WorkerHost {
           context,
           resolved,
           parameters as ImageParameters,
+          trace,
         );
       } else {
         await this.processTextGeneration(
@@ -95,7 +118,7 @@ export class GenerationProcessor extends WorkerHost {
 
       this.logger.log(`Generation ${generationId} completed successfully`);
     } catch (error) {
-      await this.handleFailure(context, error);
+      await this.handleFailure(context, error, trace);
     }
   }
 
@@ -154,6 +177,7 @@ export class GenerationProcessor extends WorkerHost {
     context: JobContext,
     resolved: ResolvedPrompt,
     parameters: ImageParameters | undefined,
+    trace?: LangfuseJobTrace,
   ): Promise<void> {
     const { generationId } = context;
     const imageParams = parameters || {};
@@ -182,6 +206,8 @@ export class GenerationProcessor extends WorkerHost {
       userId: context.userId,
       traceId: generationId,
     });
+
+    trace?.setOutput(imageDataUri(result));
 
     if (await this.isCancelled(generationId)) return;
 
@@ -301,10 +327,12 @@ export class GenerationProcessor extends WorkerHost {
   private async handleFailure(
     context: JobContext,
     error: unknown,
+    trace?: LangfuseJobTrace,
   ): Promise<void> {
     const { generationId } = context;
     const errorMessage =
       error instanceof Error ? error.message : 'Unknown error occurred';
+    trace?.setError(errorMessage);
 
     this.logger.error(
       `Generation ${generationId} failed: ${errorMessage}`,

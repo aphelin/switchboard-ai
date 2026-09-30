@@ -1,6 +1,6 @@
 # AI Engineering Roadmap & Notes
 
-The planning notes written before the AI platform work (RAG, agents, MCP, evals, cloud, CI/CD). Kept as a record of the plan: [`architecture.md`](./architecture.md) describes what was actually built, and some ideas below (LangGraph, Langfuse, reranking) were not.
+The planning notes written before the AI platform work (RAG, agents, MCP, evals, cloud, CI/CD). Kept as a record of the plan: [`architecture.md`](./architecture.md) describes what was actually built, and some ideas below (LangGraph, reranking, self-hosted Langfuse) were not. Langfuse was added later as an optional Langfuse Cloud export next to the `LlmCall` table.
 
 > Written 2026-09-13. Free tiers, pricing and framework landscape change often. Re-check before relying on numbers.
 
