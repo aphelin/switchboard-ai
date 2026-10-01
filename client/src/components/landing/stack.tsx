@@ -44,7 +44,7 @@ const ROWS: Row[] = [
   },
   {
     label: "Retrieval",
-    text: "The indexer cuts documents into 800-character chunks with 120 overlap, embeds them in-process, searches two ways and fuses by rank.",
+    text: "The indexer splits at Markdown headings into ~200-token chunks with 30 overlap, embeds them in-process, searches two ways and fuses by rank.",
     groups: [{ tags: [code("bge-small-en-v1.5"), "384 dims · Transformers.js on CPU", "pgvector · HNSW, cosine", "Postgres full-text · GIN", "Reciprocal Rank Fusion · k = 60", "6 of 20 candidates", "prompt-injection scanner", ".txt · .md · .pdf"] }],
   },
   {
@@ -60,8 +60,8 @@ const ROWS: Row[] = [
   },
   {
     label: "Ledger",
-    text: "Every model call writes one row with its tokens, cost, latency, the model that answered and whose key paid. Prices come from the live catalog.",
-    groups: [{ tags: ["per-call traces", "cost per feature", "daily budget per user", "own-key spend", "structured output with repair"] }],
+    text: "Every model call writes one row with its tokens, cost, latency, the model that answered and whose key paid. Prices come from the live catalog. The same calls can also go to Langfuse, one trace per chat turn or image job.",
+    groups: [{ tags: ["per-call traces", "Langfuse export", "cost per feature", "daily budget per user", "own-key spend", "structured output with repair"] }],
   },
   {
     label: "MCP",
@@ -71,8 +71,8 @@ const ROWS: Row[] = [
   },
   {
     label: "Evals",
-    text: "The corpus is fictional, so answers cannot come from memory. Every push runs retrieval hit@k and MRR. An LLM judge scores faithfulness when a provider key is set. Thresholds fail CI.",
-    groups: [{ tags: ["hit@k", "MRR", "LLM-as-judge", "never prints PWNED", "GitHub Actions"] }],
+    text: "The corpus is fictional, so answers cannot come from memory. Every push scores retrieval with recall@5, MRR and nDCG@5. An LLM judge scores faithfulness when a provider key is set. Thresholds fail CI.",
+    groups: [{ tags: ["recall@5", "MRR", "nDCG@5", "LLM-as-judge", "never prints PWNED", "GitHub Actions"] }],
   },
   {
     label: "Stack",
