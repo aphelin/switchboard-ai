@@ -174,9 +174,10 @@ REDIS_PORT=6379
 POLLINATIONS_API_KEY=your_pollinations_api_key
 SERVER_PORT=4000
 CLIENT_URL=http://localhost:3000
-BETTER_AUTH_SECRET=generate_with_openssl_rand_base64_32
-# Optional: lets users add their own OpenAI / Anthropic / Google keys
-CREDENTIALS_ENCRYPTION_KEY=generate_with_openssl_rand_base64_32
+# Required, 32+ characters: openssl rand -base64 32
+BETTER_AUTH_SECRET=
+# Optional: lets users add their own OpenAI / Anthropic / Google keys (openssl rand -base64 32)
+CREDENTIALS_ENCRYPTION_KEY=
 # Optional: also send model calls to Langfuse (keys from a free Langfuse Cloud project)
 LANGFUSE_PUBLIC_KEY=
 LANGFUSE_SECRET_KEY=
@@ -188,7 +189,7 @@ NEXT_PUBLIC_API_URL=http://localhost:4000/api
 NEXT_PUBLIC_APP_URL=http://localhost:3000
 ```
 
-For production add `NODE_ENV=production` and set `SERVER_PUBLIC_URL` to the public origin of the API (it is used to build image URLs).
+Fill in `BETTER_AUTH_SECRET` before the first start: the server refuses to start while it is empty or shorter than 32 characters. For production add `NODE_ENV=production` and set `SERVER_PUBLIC_URL` to the public origin of the API (it is used to build image URLs).
 
 ### Option 1: Docker — Development (Recommended)
 
