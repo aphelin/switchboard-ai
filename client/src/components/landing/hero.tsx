@@ -53,7 +53,7 @@ export function Hero({ signedIn }: { signedIn: boolean }) {
             animate={{ opacity: 1, y: 0 }}
             transition={{ ...spring, delay: 0.35 }}
           >
-            Each generation, search and agent step runs through the queue, gets a price and leaves a trace. The agent asks before it spends.
+            Generations run as queued jobs. Each job and each chat turn gets a price and a trace, and the agent asks before it spends money on an image.
           </motion.p>
           <motion.div
             className="mt-9 flex flex-wrap items-center gap-3"

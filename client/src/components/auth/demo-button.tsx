@@ -23,7 +23,7 @@ interface DemoButtonProps {
  * of a real session (documents, generations, chats, traces) before it answers,
  * so the app opens with data in place.
  */
-export function DemoButton({ size = "lg", label = "Try the live demo", fallback = null, className }: DemoButtonProps) {
+export function DemoButton({ size = "lg", label = "Try the demo", fallback = null, className }: DemoButtonProps) {
   const status = useDemoStatus();
   const router = useRouter();
   const pathname = usePathname();

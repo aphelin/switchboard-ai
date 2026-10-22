@@ -31,7 +31,7 @@ const BEATS: Beat[] = [
   {
     id: "agent",
     title: "An agent that asks before it spends.",
-    text: "Tool calls stream into the transcript with citations. Anything that costs money waits for your yes.",
+    text: "Tool calls stream into the transcript with citations. Image tools wait for your yes.",
     tags: ["tool calls", "citations", "approval gate"],
     pane: <ChatSample />,
   },
