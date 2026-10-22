@@ -22,7 +22,7 @@ The ground layer (`client/src/components/layout/aurora.tsx`) shows a drawn scene
 - Size: 2400 × 1400 px, JPEG quality 80 or so (aim for under 400 KB).
 - Content: a dark cinematic background only, no text, no UI, no logo.
 - Drop it at `client/public/art/ground.jpg`; nothing else to change.
-- Status (2026-09-15): in place, generated with Nano Banana 2 from the prompt below and converted from a 1376 × 768 PNG export (JPEG q82, 73 KB). Its provenance is embedded in the file's JPEG comment (`impeccable embed-prompt`). It is upscaled on large and high-density screens; a 2K or wider export from the same prompt can replace it at the same path, then re-run `impeccable embed-prompt` on the new file.
+- Status (2026-09-15): in place, generated with Nano Banana 2 from the prompt below and converted from a 1376 × 768 PNG export (JPEG q82, 73 KB). It is upscaled on large and high-density screens; a 2K or wider export from the same prompt can replace it at the same path.
 - On phones the layer pushes the image up (`top: -30vh; height: 130vh`, 68 % opacity) so the bright opening sits behind the header rather than the headline.
 
 Prompt for Nano Banana:

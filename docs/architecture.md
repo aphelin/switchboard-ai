@@ -2,7 +2,7 @@
 
 This document explains how the AI features of Switchboard AI work, why they are built the way they are, and what the trade-offs are. Every section ends with the questions the design has to answer, so the trade-offs are explicit.
 
-Companion documents: [`ai-engineering-roadmap.md`](./ai-engineering-roadmap.md) (why these features, cost notes, landscape) and the main [README](../README.md) (setup and API reference).
+Setup and the API reference are in the main [README](../README.md).
 
 ---
 

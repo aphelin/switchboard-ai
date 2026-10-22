@@ -1,8 +1,10 @@
 # Switchboard AI
 
+Not hosted yet. It runs locally with Docker; see [Setup Instructions](#setup-instructions).
+
 A fullstack AI application: image and text generation with async job processing, a **RAG knowledge base** over your own documents (pgvector, hybrid search), a **streaming tool-using chat agent** with human approval for side effects, an **MCP server** that exposes the same capabilities to external agents, **LLM observability** (tokens, cost, latency per call) and an **evaluation harness** that runs in CI. Everything is **per user**: email + password accounts, API keys for MCP clients, and a daily AI spending limit.
 
-Design notes and trade-offs live in [`docs/architecture.md`](./docs/architecture.md); the original plan and cost notes in [`docs/ai-engineering-roadmap.md`](./docs/ai-engineering-roadmap.md).
+Design notes and trade-offs are in [`docs/architecture.md`](./docs/architecture.md).
 
 ![Switchboard AI landing page](./docs/screenshots/landing.jpg)
 
@@ -139,7 +141,7 @@ The original project deliberately avoided provider abstractions (KISS/YAGNI). Mu
 
 ### Demo sessions
 
-- **"Try the live demo"** on the landing page opens a guest session in one click, no sign-up (Better Auth anonymous user)
+- **Guest mode** for a hosted deployment: one click on the landing page opens a guest session with no sign-up (Better Auth anonymous user)
 - The guest starts with a private copy of a real session: completed generations, indexed documents (chunks and embeddings copied inside Postgres), conversations and the traces behind them. Copies get new ids, so guests are isolated by the same `userId` filters as accounts
 - Included (free) models only: guests can't store provider keys or create MCP API keys, so nobody's paid key is ever used for a visitor
 - Cost and abuse limits: a per-guest daily budget, a shared daily budget for all guests, a daily cap on new guests and a per-IP limit on guest sign-ins. Copied traces are history and never count toward a budget
